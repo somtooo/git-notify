@@ -31,7 +31,6 @@ class MyPluginTest : BasePlatformTestCase() {
 
     fun testProjectService() {
         val projectService = project.service<MyProjectService>()
-
         assertNotSame(projectService.getRandomNumber(), projectService.getRandomNumber())
     }
 
