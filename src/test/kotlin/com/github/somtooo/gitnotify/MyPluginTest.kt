@@ -56,6 +56,7 @@ class MyPluginTest : BasePlatformTestCase() {
         val result = projectService.getRandomNumberNotify(project)
         assertTrue(result in 1..2)
         
+        // fix this test is broken
         if (result == 2) {
             assertTrue(notificationShown, "Notification should have been shown when number is 2")
         } else {
