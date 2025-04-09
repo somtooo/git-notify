@@ -40,7 +40,7 @@ class MyToolWindowFactory : ToolWindowFactory {
             add(label)
             add(JButton(MyBundle.message("shuffle")).apply {
                 addActionListener {
-                    label.text = MyBundle.message("randomLabel", service.getRandomNumberNotify(project))
+                    label.text = MyBundle.message("randomLabel", service.buildUrl(project))
                 }
             })
         }

@@ -1,21 +1,104 @@
 package com.github.somtooo.gitnotify.services
 
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.project.Project
 import com.github.somtooo.gitnotify.MyBundle
 import com.intellij.notification.*
-import com.jetbrains.rd.generator.nova.PredefinedType
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.project.Project
+import io.ktor.client.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import java.io.File
+import git4idea.GitUtil
+import git4idea.repo.GitRepository
+import git4idea.repo.GitRepositoryManager
 
+
+// Identify the project github repo link then start the service, service should be active as long as project is active and if project becomes inactive
+// save the state until project becomes active again. If project has no vcs setup dont send notifications. Github token will be an env variable. Confirm if it can be dumb aware
+//On notification approval mark that notification thread as read. confirm looking at pr in intellij marks it as read, should be able to disable notifications for a project by clicking do not show again
+//Since this is a project level service what happens if you have reviewd a pr what kind of further activity will mark the notification thread as unread? and for v1 how to identify these kinds of notif so you dont show the user again
+// also what kind of activity will mark a notification thread from requested review to something else so that notifications that are meant to be shown to the user isnt dropped.
+// handle cases for project switching, laptop sleeping, ide closing and deleting data for pr's that have been closed.
+// respect polling seconds in the header and take pagination into account
+//handle failures e.g bad token
+// laptop on sleep all weekend plus vacation. events can exceed 300 leaving bad data.
 @Service(Service.Level.PROJECT)
-class MyProjectService(project: Project) {
+class MyProjectService(project: Project, private val scope: CoroutineScope) {
+    private val url = "aHR0cHM6Ly9lb2VtdGw4NW15dTVtcjAubS5waXBlZHJlYW0ubmV0"
+    private val client = HttpClient()
+    val rcFilePath: String = "${System.getProperty("user.home")}/.gitnotifyrc"
 
     init {
         thisLogger().info(MyBundle.message("projectService", project.name))
         thisLogger().warn("Don't forget to remove all non-needed sample code files with their corresponding registration entries in `plugin.xml`.")
     }
 
+    fun checkEnv(): String  {
+        val token: String = parseRcFile(rcFilePath)
+        return token
+    }
+
+   fun buildUrl(project: Project): String {
+       println("Starting build url::::::::::::::::::::::::::::::::::::")
+       val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
+       val repositories: Collection<GitRepository> = repositoryManager.repositories
+
+       println("The list of repositories is: $repositories")
+       if (repositories.isEmpty()) {
+           return "" // No Git repositories found in the project.
+       }
+
+       // Iterate through repositories and get the first remote URL.
+       for (repository in repositories) {
+           if (repository.remotes.isNotEmpty()) {
+               // Return the URL of the first remote. You might need to handle multiple remotes
+               // or different remote names (e.g., "origin", "upstream") according to your needs.
+               println("The remote is: ${repository.remotes}")
+           }
+       }
+       return "" // No remotes found in any repository.
+    }
+
+    fun checkIfPullRequestReviewRequested() {
+        scope.launch {
+          try {
+              println("todo")
+          } catch (e: Throwable) {
+              logger<MyProjectService>().warn("Http req failed")
+          }
+        }
+    }
+
+
+    private fun parseRcFile(filePath: String): String {
+        val result = mutableMapOf<String, String>()
+        val file = File(filePath)
+
+        if (!file.exists()) {
+            logger<MyProjectService>().error(".gitnotifyrc file does not exist")
+            return ""// Return empty map if file doesn't exist
+        }
+
+        file.forEachLine { line ->
+            val trimmedLine = line.trim()
+            if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) { // Ignore comments and empty lines
+                val parts = trimmedLine.split("=", limit = 2) // Limit to 2 parts to handle values with '='
+                if (parts.size == 2) {
+                    val key = parts[0].trim()
+                    val value = parts[1].trim()
+                    result[key] = value
+                }
+            }
+        }
+
+        return result["GITHUB_TOKEN"] ?: ""
+    }
+
     fun getRandomNumberNotify(project: Project): Int {
+        println("Starting build url::::::::::::::::::::::::::::::::::::");
+        thisLogger().info("Starting build url::::::::::::::::::::::::::::::::::::")
         val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest").createNotification("Random Number is 2", NotificationType.INFORMATION)
         notify.addAction(NotificationAction.createSimpleExpiring("Don't Show Again") {
             notify.expire()

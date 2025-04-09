@@ -38,6 +38,16 @@ class MyPluginTest : BasePlatformTestCase() {
         assertNotSame(projectService.getRandomNumber(), projectService.getRandomNumber())
     }
 
+    fun testEnv() {
+        val projectService = project.service<MyProjectService>()
+        assert(projectService.checkEnv().isNotEmpty())
+    }
+
+    fun testUrl() {
+        val projectService = project.service<MyProjectService>()
+        assertNotNull(projectService.buildUrl())
+    }
+
     fun testGetRandomNumberNotify() {
         var notificationShown = false
         val connection = project.messageBus.connect()
@@ -58,9 +68,9 @@ class MyPluginTest : BasePlatformTestCase() {
         
         // fix this test is broken
         if (result == 2) {
-            assertTrue(notificationShown, "Notification should have been shown when number is 2")
+            assertTrue("Notification should have been shown when number is 2", notificationShown)
         } else {
-            assertFalse(notificationShown, "Notification should not have been shown when number is 1")
+            assertFalse("Notification should not have been shown when number is 1", notificationShown)
         }
         
         connection.disconnect()
