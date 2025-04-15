@@ -1,19 +1,43 @@
 package com.github.somtooo.gitnotify.services
 
 import com.github.somtooo.gitnotify.MyBundle
-import com.intellij.notification.*
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationAction
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
-import io.ktor.client.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import java.io.File
-import git4idea.GitUtil
+import com.intellij.openapi.vcs.VcsNotifier
+import com.intellij.util.messages.Topic
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
+import io.ktor.client.*
+import kotlinx.coroutines.*
+import org.jetbrains.plugins.github.authentication.accounts.GithubProjectDefaultAccountHolder
+import java.io.File
+import java.util.*
+import kotlin.system.measureTimeMillis
+data class ActionContext(
+    val actionName: String,
+    val startTime: Long = System.currentTimeMillis(),
+    val additionalInfo: Any? = null
+)
 
+// 2. Define your Topic interface in Kotlin
+interface ChangeActionListener {
+    companion object {
+        val CHANGE_ACTION_TOPIC: Topic<ChangeActionListener> = Topic.create(
+            "MyPlugin.ChangeAction",
+            ChangeActionListener::class.java
+        )
+    }
+
+    fun beforeAction(context: ActionContext)
+    fun afterAction(context: ActionContext)
+}
 
 // Identify the project github repo link then start the service, service should be active as long as project is active and if project becomes inactive
 // save the state until project becomes active again. If project has no vcs setup dont send notifications. Github token will be an env variable. Confirm if it can be dumb aware
@@ -35,11 +59,48 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
         thisLogger().warn("Don't forget to remove all non-needed sample code files with their corresponding registration entries in `plugin.xml`.")
     }
 
+    fun doChange(project: Project) {
+        val myContext = ActionContext(
+            actionName = "MySpecificKotlinAction",
+            additionalInfo = mapOf("key" to "value", "count" to 10)
+        )
+        val publisher = project.messageBus.syncPublisher(ChangeActionListener.CHANGE_ACTION_TOPIC)
+        publisher.beforeAction(myContext) // Sending 'myContext' as data
+        try {
+            // do action
+        } finally {
+            publisher.afterAction(myContext) // Sending the same or a modified 'myContext'
+        }
+    }
+    fun runActivity(project: Project) {
+        val connection = project.messageBus.connect()
+        connection.subscribe(ChangeActionListener.CHANGE_ACTION_TOPIC, object : ChangeActionListener {
+            override fun beforeAction(context: ActionContext) {
+                println(
+                    "Before action: ${context.actionName}, " +
+                            "Started at: ${Date(context.startTime)}, " +
+                            "Info: ${context.additionalInfo}"
+                )
+                // Access the data from the 'context' object
+            }
+
+            override fun afterAction(context: ActionContext) {
+                println("After action: ${context.actionName}")
+                // Access the data from the 'context' object
+            }
+        })
+    }
+
     fun checkEnv(): String  {
         val token: String = parseRcFile(rcFilePath)
         return token
     }
 
+    fun getSettings(project: Project) {
+        val notifier = VcsNotifier.getInstance(project)
+        val defaultAccountHolder = project.service<GithubProjectDefaultAccountHolder>()
+        println(defaultAccountHolder.state.defaultAccountId);
+    }
    fun buildUrl(project: Project): String {
        println("Starting build url::::::::::::::::::::::::::::::::::::")
        val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
@@ -62,15 +123,20 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
     }
 
     fun checkIfPullRequestReviewRequested() {
-        scope.launch {
+      var k: Job =   scope.launch(Dispatchers.Default) {
+          launch {
+             async {
+             }
+          }
           try {
               println("todo")
           } catch (e: Throwable) {
               logger<MyProjectService>().warn("Http req failed")
           }
         }
-    }
 
+        k.isActive
+    }
 
     private fun parseRcFile(filePath: String): String {
         val result = mutableMapOf<String, String>()
