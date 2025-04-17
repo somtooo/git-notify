@@ -13,7 +13,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.somtooo.gitnotify.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <notificationGroup displayType="BALLOON" id="GithubPullRequest"/>
-        <postStartupActivity implementation="com.github.somtooo.gitnotify.services.ConfigurationCheckerStartupActivity"/>
+        <postStartupActivity implementation="com.github.somtooo.gitnotify.extensions.ConfigurationCheckerStartupActivity"/>
     </extensions>
 
     <applicationListeners>
