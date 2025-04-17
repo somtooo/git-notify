@@ -15,6 +15,7 @@ import javax.swing.JButton
 
 class MyToolWindowFactory : ToolWindowFactory {
 
+
     init {
         thisLogger().warn("Don't forget to remove all non-needed sample code files with their corresponding registration entries in `plugin.xml`.")
     }
@@ -30,6 +31,8 @@ class MyToolWindowFactory : ToolWindowFactory {
     class MyToolWindow(toolWindow: ToolWindow) {
 
         private val service = toolWindow.project.service<MyProjectService>()
+        private val project: Project = toolWindow.project;
+
 
         fun getContent() = JBPanel<JBPanel<*>>().apply {
             val label = JBLabel(MyBundle.message("randomLabel", "?"))
@@ -37,7 +40,7 @@ class MyToolWindowFactory : ToolWindowFactory {
             add(label)
             add(JButton(MyBundle.message("shuffle")).apply {
                 addActionListener {
-                    label.text = MyBundle.message("randomLabel", service.getRandomNumber())
+                    label.text = MyBundle.message("randomLabel", service.buildUrl(project))
                 }
             })
         }
