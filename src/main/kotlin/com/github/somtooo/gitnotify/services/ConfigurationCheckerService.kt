@@ -2,6 +2,7 @@ package com.github.somtooo.gitnotify.services
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import git4idea.repo.GitRepository
@@ -10,11 +11,15 @@ import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.http.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileNotFoundException
 
+import com.intellij.util.io.HttpRequests
+
+data class GithubUrlPathParameters(val owner: String, val repo: String)
 @Service(Service.Level.PROJECT)
 class ConfigurationCheckerService(private val project: Project, private val scope: CoroutineScope) {
     val rcFilePath: String = "${System.getProperty("user.home")}/.gitnotifyrc"
@@ -34,7 +39,7 @@ class ConfigurationCheckerService(private val project: Project, private val scop
             val response: HttpResponse = client.head("https://www.github.com")
             response.status.value in 200..299 // Check for successful HTTP status codes
         } catch (e: Exception) {
-            LOG.error("Error checking internet connectivity: ${e.message}")
+            LOG.debug("Error checking internet connectivity: ${e.message}")
             false
         } finally {
             client.close()
@@ -80,26 +85,51 @@ class ConfigurationCheckerService(private val project: Project, private val scop
                     return false
                 }
                 else -> {
-                    LOG.error(e.message)
+                    LOG.debug(e.message)
                     return false
                 }
             }
         }
     }
 
-    // confirm token can auth notifications and token can auth pull requests endpoint.
-    // handle error returned.
-    private fun checkTokenIsValid(token: String): Boolean = runBlocking {
+     fun checkTokenIsValid(token: String): Boolean {
+        val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
+        val repositories: List<GitRepository> = repositoryManager.repositories
+        val url = "https://github.com/somtooo/DbGO"
+        val pathParameters = buildGithubUrlPathParams(url)
+        val endpoints = listOf(
+            "https://api.github.com/repos/${pathParameters.owner}/${pathParameters.repo}/notifications",
+            "https://api.github.com/repos/${pathParameters.owner}/${pathParameters.repo}/pulls"
+        )
         val client = HttpClient(CIO)
-        return@runBlocking try {
-            val response: HttpResponse = client.head("https://www.github.com")
-            response.status.value in 200..299 // Check for successful HTTP status codes
-        } catch (e: Exception) {
-            LOG.error("Error checking internet connectivity: ${e.message}")
-            false
-        } finally {
-            client.close()
+        val status = mutableListOf<Int>()
+        for (endpoint in endpoints) {
+            runBlocking {
+                try {
+                    val response = client.get(endpoint) {
+                        headers {
+                            append(HttpHeaders.Accept, "application/vnd.github+json")
+                            append(HttpHeaders.Authorization, "Bearer $token")
+                            append("X-GitHub-Api-Version", "2022-11-28")
+                        }
+                    }
+                    status.add(response.status.value)
+                } catch (e: Error) {
+                    LOG.debug(e.message)
+                    return@runBlocking false
+                }
+            }
         }
+
+        val result =   status.all {
+            it in  200..299
+        }
+
+        if (!result) {
+            LOG.debug("Status codes are $status")
+        }
+
+        return result
     }
 
     private fun findFirstGithubUrl(repositories: List<GitRepository>): String {
@@ -120,7 +150,7 @@ class ConfigurationCheckerService(private val project: Project, private val scop
         val file = File(filePath)
 
         if (!file.exists()) {
-            logger<MyProjectService>().error(".gitnotifyrc file does not exist")
+            logger<MyProjectService>().debug(".gitnotifyrc file does not exist")
             throw FileNotFoundException("RC File does not exist");
         }
 
@@ -137,5 +167,13 @@ class ConfigurationCheckerService(private val project: Project, private val scop
         }
 
         return result;
+    }
+
+     fun buildGithubUrlPathParams(url: String): GithubUrlPathParameters {
+        val urlPaths = url.split(Regex("//|/"))
+        val repo = urlPaths[urlPaths.size -1].split(".")[0]
+        val owner = urlPaths[urlPaths.size -2]
+
+        return GithubUrlPathParameters(owner, repo);
     }
 }

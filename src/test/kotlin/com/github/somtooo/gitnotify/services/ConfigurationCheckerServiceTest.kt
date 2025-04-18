@@ -13,6 +13,7 @@ import org.junit.runners.JUnit4
 import org.mockito.Mockito
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+
 import org.mockito.MockitoAnnotations
 
 @RunWith(JUnit4::class)
@@ -68,6 +69,31 @@ class ConfigurationCheckerServiceTest : BasePlatformTestCase() {
         `when`(remote.urls).thenReturn(listOf("https://github.com/some/repo.git"))
 
         assertTrue(configurationCheckerService.hasVcsEnabled())
+    }
+
+    @Test
+    fun `checks if token is set in rc file`() {
+        assertTrue(configurationCheckerService.hasGithubTokenSetInRcFile())
+    }
+
+    @Test
+    fun `checkTokenIsValid returns true when all API calls return 200`() {
+        assertTrue(configurationCheckerService.checkTokenIsValid(System.getenv("GITHUB_TOKEN")))
+    }
+
+    @Test
+    fun `checkTokenIsValid returns false when all API calls return failed status code`() {
+        assertFalse(configurationCheckerService.checkTokenIsValid("wrong token"))
+    }
+
+
+
+    @Test
+    fun `it builds GithubPathParamCorrectly`() {
+        val url = "https://github.com/somtooo/DbGO.git"
+        val pathParameters = configurationCheckerService.buildGithubUrlPathParams(url)
+        assertTrue(pathParameters.repo == "DbGO")
+        assertTrue(pathParameters.owner == "somtooo")
     }
 
 }

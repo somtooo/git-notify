@@ -16,7 +16,6 @@ import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import io.ktor.client.*
 import kotlinx.coroutines.*
-import org.jetbrains.plugins.github.authentication.accounts.GithubProjectDefaultAccountHolder
 import java.io.File
 import java.util.*
 import kotlin.system.measureTimeMillis
@@ -96,11 +95,11 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
         return token
     }
 
-    fun getSettings(project: Project) {
-        val notifier = VcsNotifier.getInstance(project)
-        val defaultAccountHolder = project.service<GithubProjectDefaultAccountHolder>()
-        println(defaultAccountHolder.state.defaultAccountId);
-    }
+//    fun getSettings(project: Project) {
+//        val notifier = VcsNotifier.getInstance(project)
+//        val defaultAccountHolder = project.service<GithubProjectDefaultAccountHolder>()
+//        println(defaultAccountHolder.state.defaultAccountId);
+//    }
    fun buildUrl(project: Project): String {
        println("Starting build url::::::::::::::::::::::::::::::::::::")
        val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
