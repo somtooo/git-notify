@@ -6,11 +6,9 @@ import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vcs.VcsNotifier
 import com.intellij.util.messages.Topic
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
@@ -18,7 +16,7 @@ import io.ktor.client.*
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.*
-import kotlin.system.measureTimeMillis
+
 data class ActionContext(
     val actionName: String,
     val startTime: Long = System.currentTimeMillis(),
