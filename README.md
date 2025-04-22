@@ -1,4 +1,4 @@
-# git-notify
+# git-notify2
 
 ![Build](https://github.com/somtooo/git-notify/workflows/Build/badge.svg)
 [![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
