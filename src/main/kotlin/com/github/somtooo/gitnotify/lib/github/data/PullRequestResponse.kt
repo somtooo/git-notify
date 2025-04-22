@@ -5,8 +5,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class PullRequestResponse(
-    @SerialName("state")
-    val state: PullRequestState
+    val state: PullRequestState,
+    val user: SimpleUser,
 )
 
 @Serializable
@@ -17,3 +17,4 @@ enum class PullRequestState {
     @SerialName("closed")
     CLOSED
 }
+

@@ -2,6 +2,7 @@ package com.github.somtooo.gitnotify.services
 
 import com.github.somtooo.gitnotify.MyBundle
 import com.github.somtooo.gitnotify.lib.github.GithubRequests
+import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -14,6 +15,7 @@ import com.intellij.util.messages.Topic
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import io.ktor.client.*
+import io.ktor.util.*
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.*
@@ -42,20 +44,34 @@ class GithubNotification(private val project: Project, private val scope: Corout
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
 
     fun pollForNotifications() {
-        val idToPullRequestUrl = mutableMapOf<String, String>()
+        val idToPullRequestNumber = mutableMapOf<String, String>()
         scope.launch {
 
-            while (true) {
+            while (isActive) {
                 val notificationThreadResponses = githubRequests.getRepositoryNotifications();
                 for (notificationThreadResponse in notificationThreadResponses) {
-                    if (notificationThreadResponse.reason.equals(reasonKey)) {
-                        if (idToPullRequestUrl[notificationThreadResponse.id] !== null) {
-
-                            idToPullRequestUrl[notificationThreadResponse.id] =
-                                notificationThreadResponse.repository.pullsUrl
+                    if (notificationThreadResponse.reason == reasonKey) {
+                        if (idToPullRequestNumber[notificationThreadResponse.id] !== null) {
+                            val pullRequestUrl = notificationThreadResponse.subject.url;
+                            val urlPaths = pullRequestUrl.split(Regex("//|/"))
+                            val pullRequestNumber = urlPaths.last()
+                            val pullRequestResponse = githubRequests.getAPullRequest(pullRequestNumber)
+                            if (pullRequestResponse.state !== PullRequestState.CLOSED) {
+                                val content =
+                                    "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
+                                notifyPullRequest(content)
+                                val publisher =
+                                    project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
+                                publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
+                                idToPullRequestNumber[notificationThreadResponse.id] =
+                                    pullRequestNumber
+                            } // If pull request is closed we might want to mark as read so we dont keep getting the notifications in the list
                         }
                     }
+
+                    // check if any pull request is closed update the map so it dosent grow too big can be done every hour
                 }
+                delay(3000);
             }
         }
     }
