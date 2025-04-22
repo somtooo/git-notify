@@ -1,6 +1,7 @@
 package com.github.somtooo.gitnotify.services
 
 import com.github.somtooo.gitnotify.MyBundle
+import com.github.somtooo.gitnotify.lib.github.GithubRequests
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -17,23 +18,56 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.util.*
 
-data class ActionContext(
-    val actionName: String,
-    val startTime: Long = System.currentTimeMillis(),
-    val additionalInfo: Any? = null
+data class ReviewRequestedContext(
+    val pullRequestUrl: String,
 )
 
-// 2. Define your Topic interface in Kotlin
-interface ChangeActionListener {
+interface ReviewRequestedNotifier {
     companion object {
-        val CHANGE_ACTION_TOPIC: Topic<ChangeActionListener> = Topic.create(
-            "MyPlugin.ChangeAction",
-            ChangeActionListener::class.java
+        @Topic.ProjectLevel
+        val REVIEW_REQUESTED_TOPIC: Topic<ReviewRequestedNotifier> = Topic.create(
+            "GitNotify.ReviewRequested",
+            ReviewRequestedNotifier::class.java
         )
     }
 
-    fun beforeAction(context: ActionContext)
-    fun afterAction(context: ActionContext)
+    fun onReviewRequested(context: ReviewRequestedContext)
+}
+
+@Service(Service.Level.PROJECT)
+class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
+    private val githubRequests = GithubRequests()
+    private val reasonKey = "review_requested"
+    private val notifier =
+        NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
+
+    fun pollForNotifications() {
+        val idToPullRequestUrl = mutableMapOf<String, String>()
+        scope.launch {
+
+            while (true) {
+                val notificationThreadResponses = githubRequests.getRepositoryNotifications();
+                for (notificationThreadResponse in notificationThreadResponses) {
+                    if (notificationThreadResponse.reason.equals(reasonKey)) {
+                        if (idToPullRequestUrl[notificationThreadResponse.id] !== null) {
+
+                            idToPullRequestUrl[notificationThreadResponse.id] =
+                                notificationThreadResponse.repository.pullsUrl
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun notifyPullRequest(content: String) {
+        val notify: Notification =
+            notifier.createNotification(title = "Git-Notify", content, NotificationType.INFORMATION)
+        notify.addAction(NotificationAction.createSimpleExpiring("Reviewed") {
+            notify.expire()
+        })
+        notify.notify(project)
+    }
 }
 
 // Identify the project github repo link then start the service, service should be active as long as project is active and if project becomes inactive
@@ -46,7 +80,7 @@ interface ChangeActionListener {
 //handle failures e.g bad token
 // laptop on sleep all weekend plus vacation. events can exceed 300 leaving bad data.
 @Service(Service.Level.PROJECT)
-class MyProjectService(project: Project, private val scope: CoroutineScope) {
+class MyProjectService(private val project: Project, private val scope: CoroutineScope) {
     private val url = "aHR0cHM6Ly9lb2VtdGw4NW15dTVtcjAubS5waXBlZHJlYW0ubmV0"
     private val client = HttpClient()
     val rcFilePath: String = "${System.getProperty("user.home")}/.gitnotifyrc"
@@ -57,11 +91,11 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
     }
 
     fun doChange(project: Project) {
-        val myContext = ActionContext(
+        val myContext = ReviewRequestedContext(
             actionName = "MySpecificKotlinAction",
             additionalInfo = mapOf("key" to "value", "count" to 10)
         )
-        val publisher = project.messageBus.syncPublisher(ChangeActionListener.CHANGE_ACTION_TOPIC)
+        val publisher = project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
         publisher.beforeAction(myContext) // Sending 'myContext' as data
         try {
             // do action
@@ -69,10 +103,11 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
             publisher.afterAction(myContext) // Sending the same or a modified 'myContext'
         }
     }
+
     fun runActivity(project: Project) {
         val connection = project.messageBus.connect()
-        connection.subscribe(ChangeActionListener.CHANGE_ACTION_TOPIC, object : ChangeActionListener {
-            override fun beforeAction(context: ActionContext) {
+        connection.subscribe(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC, object : ReviewRequestedNotifier {
+            override fun beforeAction(context: ReviewRequestedContext) {
                 println(
                     "Before action: ${context.actionName}, " +
                             "Started at: ${Date(context.startTime)}, " +
@@ -81,55 +116,55 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
                 // Access the data from the 'context' object
             }
 
-            override fun afterAction(context: ActionContext) {
+            override fun afterAction(context: ReviewRequestedContext) {
                 println("After action: ${context.actionName}")
                 // Access the data from the 'context' object
             }
         })
     }
 
-    fun checkEnv(): String  {
+    fun checkEnv(): String {
         val token: String = parseRcFile(rcFilePath)
         return token
     }
 
-//    fun getSettings(project: Project) {
+    //    fun getSettings(project: Project) {
 //        val notifier = VcsNotifier.getInstance(project)
 //        val defaultAccountHolder = project.service<GithubProjectDefaultAccountHolder>()
 //        println(defaultAccountHolder.state.defaultAccountId);
 //    }
-   fun buildUrl(project: Project): String {
-       println("Starting build url::::::::::::::::::::::::::::::::::::")
-       val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
-       val repositories: Collection<GitRepository> = repositoryManager.repositories
+    fun buildUrl(project: Project): String {
+        println("Starting build url::::::::::::::::::::::::::::::::::::")
+        val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
+        val repositories: Collection<GitRepository> = repositoryManager.repositories
 
-       println("The list of repositories is: $repositories")
-       if (repositories.isEmpty()) {
-           return "" // No Git repositories found in the project.
-       }
+        println("The list of repositories is: $repositories")
+        if (repositories.isEmpty()) {
+            return "" // No Git repositories found in the project.
+        }
 
-       // Iterate through repositories and get the first remote URL.
-       for (repository in repositories) {
-           if (repository.remotes.isNotEmpty()) {
-               // Return the URL of the first remote. You might need to handle multiple remotes
-               // or different remote names (e.g., "origin", "upstream") according to your needs.
-               println("The remote is: ${repository.remotes}")
-           }
-       }
-       return "" // No remotes found in any repository.
+        // Iterate through repositories and get the first remote URL.
+        for (repository in repositories) {
+            if (repository.remotes.isNotEmpty()) {
+                // Return the URL of the first remote. You might need to handle multiple remotes
+                // or different remote names (e.g., "origin", "upstream") according to your needs.
+                println("The remote is: ${repository.remotes}")
+            }
+        }
+        return "" // No remotes found in any repository.
     }
 
     fun checkIfPullRequestReviewRequested() {
-      var k: Job =   scope.launch(Dispatchers.Default) {
-          launch {
-             async {
-             }
-          }
-          try {
-              println("todo")
-          } catch (e: Throwable) {
-              logger<MyProjectService>().warn("Http req failed")
-          }
+        var k: Job = scope.launch(Dispatchers.Default) {
+            launch {
+                async {
+                }
+            }
+            try {
+                println("todo")
+            } catch (e: Throwable) {
+                logger<MyProjectService>().warn("Http req failed")
+            }
         }
 
         k.isActive
@@ -162,16 +197,18 @@ class MyProjectService(project: Project, private val scope: CoroutineScope) {
     fun getRandomNumberNotify(project: Project): Int {
         println("Starting build url::::::::::::::::::::::::::::::::::::");
         thisLogger().info("Starting build url::::::::::::::::::::::::::::::::::::")
-        val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest").createNotification("Random Number is 2", NotificationType.INFORMATION)
+        val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest")
+            .createNotification("Random Number is 2", NotificationType.INFORMATION)
         notify.addAction(NotificationAction.createSimpleExpiring("Don't Show Again") {
             notify.expire()
         })
         val number: Int = (1..2).random()
         if (number == 2) {
-           notify.notify(project)
+            notify.notify(project)
         }
 
         return number;
     }
+
     fun getRandomNumber() = (1..2).random()
 }

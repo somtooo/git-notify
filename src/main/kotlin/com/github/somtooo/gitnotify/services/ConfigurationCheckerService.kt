@@ -21,21 +21,42 @@ import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileNotFoundException
 
-data class GithubUrlPathParameters(val owner: String, val repo: String)
+data class GithubUrlPathParameters(val owner: String, val repo: String) {
+    companion object {
+        private const val OWNER_KEY = "GITHUB_OWNER"
+        private const val REPO_KEY = "GITHUB_REPO"
+
+        fun fromEnv(): GithubUrlPathParameters {
+            val owner = System.getProperty(OWNER_KEY)
+                ?: throw IllegalStateException("$OWNER_KEY environment variable not set")
+            val repo = System.getProperty(REPO_KEY)
+                ?: throw IllegalStateException("$REPO_KEY environment variable not set")
+            return GithubUrlPathParameters(owner, repo)
+        }
+    }
+
+    fun setToEnv() {
+        System.setProperty(OWNER_KEY, owner)
+        System.setProperty(REPO_KEY, repo)
+    }
+}
+
+
 @Service(Service.Level.PROJECT)
-class ConfigurationCheckerService(private val project: Project, private val scope: CoroutineScope) {
+internal class ConfigurationCheckerService(private val project: Project, private val scope: CoroutineScope) {
     private val rcFilePath: String = "${System.getProperty("user.home")}/.gitnotifyrc"
-    val githubTokenKey: String = "GITHUB_TOKEN"
-    private val configurationCheckerNotification = NotificationGroupManager.getInstance().getNotificationGroup("ConfigurationChecker")
+    private val configurationCheckerNotification =
+        NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
 
     companion object {
-       private val LOG = logger<ConfigurationCheckerService>()
-       fun getInstance(project: Project): ConfigurationCheckerService {
-           return project.service();
-       }
-   }
+        const val GIT_HUB_TOKEN_KEY = "GITHUB_TOKEN"
+        private val LOG = logger<ConfigurationCheckerService>()
+        fun getInstance(project: Project): ConfigurationCheckerService {
+            return project.service();
+        }
+    }
 
-    fun  validateConfiguration(): Boolean {
+    fun validateConfiguration(): Boolean {
         val checks: List<() -> Boolean> = listOf(
             ::canConnectToTheInternet,
             ::hasVcsEnabled,
@@ -44,12 +65,13 @@ class ConfigurationCheckerService(private val project: Project, private val scop
 
         for (check in checks) {
             val result = check()
-            if (!result)  return false
+            if (!result) return false
         }
 
-        val notify = NotificationGroupManager.getInstance().getNotificationGroup("InfoNotification").createNotification(title = "Git-Notify", "Validation Succesfull", NotificationType.INFORMATION)
+        val notify = NotificationGroupManager.getInstance().getNotificationGroup("InfoNotification")
+            .createNotification(title = "Git-Notify", "Validation Succesfull", NotificationType.INFORMATION)
         notify.notify(project)
-         return true
+        return true
     }
 
     fun canConnectToTheInternet(): Boolean = runBlocking {
@@ -89,26 +111,27 @@ class ConfigurationCheckerService(private val project: Project, private val scop
     fun hasValidGithubTokenSetInRcFile(): Boolean {
         try {
             val result = parseRcFile(rcFilePath);
-            if (result[githubTokenKey] === null || result[githubTokenKey]?.isEmpty() == true) {
+            if (result[GIT_HUB_TOKEN_KEY] === null || result[GIT_HUB_TOKEN_KEY]?.isEmpty() == true) {
                 notifyError("Github token key not set in rc file. Please set for plugin to function")
                 LOG.warn("Github token key not set in rc file. Please set for plugin to function")
                 return false;
             }
 
-            val isTokenValid = checkTokenIsValid(result[githubTokenKey]!!)
+            val isTokenValid = checkTokenIsValid(result[GIT_HUB_TOKEN_KEY]!!)
             if (!isTokenValid) {
                 notifyError("Github token authentication failed set a valid token in rc file")
                 LOG.warn("Github token authentication failed set a valid token in rc file")
                 return false;
             }
-             return true;
+            return true;
         } catch (e: Exception) {
             when (e) {
                 is FileNotFoundException -> {
-                   notifyError("Git-notify rc file not found put rc file in home path and set key GITHUB_TOKEN")
+                    notifyError("Git-notify rc file not found put rc file in home path and set key GITHUB_TOKEN")
                     LOG.warn("Git-notify rc file not found put rc file in home path and set key GITHUB_TOKEN")
                     return false
                 }
+
                 else -> {
                     LOG.debug(e.message)
                     return false
@@ -118,7 +141,8 @@ class ConfigurationCheckerService(private val project: Project, private val scop
     }
 
     private fun notifyError(content: String) {
-        val notify: Notification = configurationCheckerNotification.createNotification(title = "Git-Notify",content, NotificationType.ERROR)
+        val notify: Notification =
+            configurationCheckerNotification.createNotification(title = "Git-Notify", content, NotificationType.ERROR)
         notify.addAction(NotificationAction.createSimpleExpiring("Validate Again") {
             notify.expire()
 
@@ -128,10 +152,10 @@ class ConfigurationCheckerService(private val project: Project, private val scop
             }
 
         })
-            notify.notify(project)
+        notify.notify(project)
     }
 
-     fun checkTokenIsValid(token: String): Boolean {
+    fun checkTokenIsValid(token: String): Boolean {
         val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
         val repositories: List<GitRepository> = repositoryManager.repositories
         val url = findFirstGithubUrl(repositories)
@@ -160,18 +184,22 @@ class ConfigurationCheckerService(private val project: Project, private val scop
             }
         }
 
-        val result =   status.all {
-            it in  200..299
+        val result = status.all {
+            it in 200..299
         }
 
         if (!result) {
             LOG.debug("Status codes are $status")
+        } else {
+            System.setProperty(GIT_HUB_TOKEN_KEY, token)
+            pathParameters.setToEnv()
         }
+
 
         return result
     }
 
-     fun findFirstGithubUrl(repositories: List<GitRepository>): String {
+    fun findFirstGithubUrl(repositories: List<GitRepository>): String {
         for (repository in repositories) {
             val remotes = repository.remotes
             for (remote in remotes) {
@@ -184,7 +212,7 @@ class ConfigurationCheckerService(private val project: Project, private val scop
         return ""
     }
 
-     fun parseRcFile(filePath: String): MutableMap<String, String> {
+    fun parseRcFile(filePath: String): MutableMap<String, String> {
         val result = mutableMapOf<String, String>()
         val file = File(filePath)
 
@@ -208,11 +236,12 @@ class ConfigurationCheckerService(private val project: Project, private val scop
         return result;
     }
 
-     fun buildGithubUrlPathParams(url: String): GithubUrlPathParameters {
+    fun buildGithubUrlPathParams(url: String): GithubUrlPathParameters {
         val urlPaths = url.split(Regex("//|/"))
-        val repo = urlPaths[urlPaths.size -1].split(".")[0]
-        val owner = urlPaths[urlPaths.size -2]
+        val repo = urlPaths[urlPaths.size - 1].split(".")[0]
+        val owner = urlPaths[urlPaths.size - 2]
 
         return GithubUrlPathParameters(owner, repo);
     }
+
 }
