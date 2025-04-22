@@ -2,8 +2,8 @@ package com.github.somtooo.gitnotify.services
 
 import com.github.somtooo.gitnotify.MyBundle
 import com.github.somtooo.gitnotify.lib.github.GithubRequests
+import com.github.somtooo.gitnotify.lib.github.data.GitHubApiException
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
-import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -18,7 +18,6 @@ import io.ktor.client.*
 import io.ktor.util.*
 import kotlinx.coroutines.*
 import java.io.File
-import java.util.*
 
 data class ReviewRequestedContext(
     val pullRequestUrl: String,
@@ -42,47 +41,118 @@ class GithubNotification(private val project: Project, private val scope: Corout
     private val reasonKey = "review_requested"
     private val notifier =
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
+    private val logger = logger<GithubNotification>()
 
     fun pollForNotifications() {
-        val idToPullRequestNumber = mutableMapOf<String, String>()
-        scope.launch {
+        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
+        var cleanupCounter = 0
+        var baseDelay = 3000L
 
+        scope.launch {
             while (isActive) {
-                val notificationThreadResponses = githubRequests.getRepositoryNotifications();
-                for (notificationThreadResponse in notificationThreadResponses) {
-                    if (notificationThreadResponse.reason == reasonKey) {
-                        if (idToPullRequestNumber[notificationThreadResponse.id] !== null) {
-                            val pullRequestUrl = notificationThreadResponse.subject.url;
-                            val urlPaths = pullRequestUrl.split(Regex("//|/"))
-                            val pullRequestNumber = urlPaths.last()
-                            val pullRequestResponse = githubRequests.getAPullRequest(pullRequestNumber)
-                            if (pullRequestResponse.state !== PullRequestState.CLOSED) {
-                                val content =
-                                    "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
-                                notifyPullRequest(content)
-                                val publisher =
-                                    project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
-                                publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
-                                idToPullRequestNumber[notificationThreadResponse.id] =
-                                    pullRequestNumber
-                            } // If pull request is closed we might want to mark as read so we dont keep getting the notifications in the list
+                try {
+                    val notificationThreadResponses = githubRequests.getRepositoryNotifications()
+                    baseDelay = 3000L  // Reset delay on success
+
+                    for (notificationThreadResponse in notificationThreadResponses) {
+                        try {
+                            if (notificationThreadResponse.reason == reasonKey) {
+                                if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null) {
+                                    val pullRequestUrl = notificationThreadResponse.subject.url
+                                    val urlPaths = pullRequestUrl.split(Regex("//|/"))
+                                    val pullRequestNumber = urlPaths.last()
+
+                                    val pullRequestResponse = githubRequests.getAPullRequest(pullRequestNumber)
+                                    if (pullRequestResponse.state !== PullRequestState.CLOSED) {
+                                        val content =
+                                            "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
+                                        notifyPullRequest(content)
+
+                                        val publisher =
+                                            project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
+                                        publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
+                                        notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
+                                            pullRequestNumber
+                                    }
+                                }
+                            }
+                        } catch (e: GitHubApiException) {
+                            logger.warn("Error processing notification ${notificationThreadResponse.id}: ${e.message}")
+                            notifyError("Failed to process notification: ${e.message}")
+                            if (e.statusCode in listOf(401, 404)) {
+                                return@launch  // Kill the coroutine for configuration issues
+                            }
+                        } catch (e: Exception) {
+                            logger.error("Unexpected error processing notification", e)
+                            notifyError("Unexpected error: ${e.message}")
                         }
                     }
 
-                    // check if any pull request is closed update the map so it dosent grow too big can be done every hour
+                    // figure out this rate limit stuff
+                    cleanupCounter++
+                    if (cleanupCounter >= 1200) {
+                        try {
+                            val iterator = notificationThreadIdToPullRequestNumber.iterator()
+                            while (iterator.hasNext()) {
+                                val entry = iterator.next()
+                                val pullRequestResponse = githubRequests.getAPullRequest(entry.value)
+                                if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                                    githubRequests.markNotificationThreadAsRead(entry.key)
+                                    iterator.remove()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            logger.error("Error during cleanup process", e)
+                            notifyError("Failed to cleanup notifications: ${e.message}")
+                        }
+                        cleanupCounter = 0
+                    }
+
+                } catch (e: GitHubApiException) {
+                    val message = when (e.statusCode) {
+                        401 -> "GitHub authentication failed. Please check your token."
+                        403 -> {
+                            baseDelay = 60000L  // Increase delay to 1 minute for rate limit
+                            "GitHub API rate limit exceeded or insufficient permissions."
+                        }
+
+                        404 -> "Resource not found. Please check repository settings."
+                        else -> "GitHub API error: ${e.message}"
+                    }
+                    logger.error(message, e)
+                    notifyError(message)
+
+                    if (e.statusCode in listOf(401, 404)) {
+                        return@launch  // Kill the coroutine for configuration issues
+                    }
+                } catch (e: Exception) {
+                    logger.error("Unexpected error in notification polling", e)
+                    notifyError("Unexpected error: ${e.message}")
                 }
-                delay(3000);
+
+                delay(baseDelay)
             }
         }
     }
 
     private fun notifyPullRequest(content: String) {
-        val notify: Notification =
-            notifier.createNotification(title = "Git-Notify", content, NotificationType.INFORMATION)
+        val notify = notifier.createNotification(
+            title = "Git-Notify",
+            content,
+            NotificationType.INFORMATION
+        )
         notify.addAction(NotificationAction.createSimpleExpiring("Reviewed") {
             notify.expire()
         })
         notify.notify(project)
+    }
+
+    private fun notifyError(content: String) {
+        notifier.createNotification(
+            title = "Git-Notify Error",
+            content,
+            NotificationType.ERROR
+        ).notify(project)
     }
 }
 
@@ -106,38 +176,38 @@ class MyProjectService(private val project: Project, private val scope: Coroutin
         thisLogger().warn("Don't forget to remove all non-needed sample code files with their corresponding registration entries in `plugin.xml`.")
     }
 
-    fun doChange(project: Project) {
-        val myContext = ReviewRequestedContext(
-            actionName = "MySpecificKotlinAction",
-            additionalInfo = mapOf("key" to "value", "count" to 10)
-        )
-        val publisher = project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
-        publisher.beforeAction(myContext) // Sending 'myContext' as data
-        try {
-            // do action
-        } finally {
-            publisher.afterAction(myContext) // Sending the same or a modified 'myContext'
-        }
-    }
-
-    fun runActivity(project: Project) {
-        val connection = project.messageBus.connect()
-        connection.subscribe(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC, object : ReviewRequestedNotifier {
-            override fun beforeAction(context: ReviewRequestedContext) {
-                println(
-                    "Before action: ${context.actionName}, " +
-                            "Started at: ${Date(context.startTime)}, " +
-                            "Info: ${context.additionalInfo}"
-                )
-                // Access the data from the 'context' object
-            }
-
-            override fun afterAction(context: ReviewRequestedContext) {
-                println("After action: ${context.actionName}")
-                // Access the data from the 'context' object
-            }
-        })
-    }
+//    fun doChange(project: Project) {
+//        val myContext = ReviewRequestedContext(
+//            actionName = "MySpecificKotlinAction",
+//            additionalInfo = mapOf("key" to "value", "count" to 10)
+//        )
+//        val publisher = project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
+//        publisher.beforeAction(myContext) // Sending 'myContext' as data
+//        try {
+//            // do action
+//        } finally {
+//            publisher.afterAction(myContext) // Sending the same or a modified 'myContext'
+//        }
+//    }
+//
+//    fun runActivity(project: Project) {
+//        val connection = project.messageBus.connect()
+//        connection.subscribe(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC, object : ReviewRequestedNotifier {
+//            override fun beforeAction(context: ReviewRequestedContext) {
+//                println(
+//                    "Before action: ${context.actionName}, " +
+//                            "Started at: ${Date(context.startTime)}, " +
+//                            "Info: ${context.additionalInfo}"
+//                )
+//                // Access the data from the 'context' object
+//            }
+//
+//            override fun afterAction(context: ReviewRequestedContext) {
+//                println("After action: ${context.actionName}")
+//                // Access the data from the 'context' object
+//            }
+//        })
+//    }
 
     fun checkEnv(): String {
         val token: String = parseRcFile(rcFilePath)
@@ -210,21 +280,21 @@ class MyProjectService(private val project: Project, private val scope: Coroutin
         return result["GITHUB_TOKEN"] ?: ""
     }
 
-    fun getRandomNumberNotify(project: Project): Int {
-        println("Starting build url::::::::::::::::::::::::::::::::::::");
-        thisLogger().info("Starting build url::::::::::::::::::::::::::::::::::::")
-        val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest")
-            .createNotification("Random Number is 2", NotificationType.INFORMATION)
-        notify.addAction(NotificationAction.createSimpleExpiring("Don't Show Again") {
-            notify.expire()
-        })
-        val number: Int = (1..2).random()
-        if (number == 2) {
-            notify.notify(project)
-        }
-
-        return number;
-    }
+//    fun getRandomNumberNotify(project: Project): Int {
+//        println("Starting build url::::::::::::::::::::::::::::::::::::");
+//        thisLogger().info("Starting build url::::::::::::::::::::::::::::::::::::")
+//        val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest")
+//            .createNotification("Random Number is 2", NotificationType.INFORMATION)
+//        notify.addAction(NotificationAction.createSimpleExpiring("Don't Show Again") {
+//            notify.expire()
+//        })
+//        val number: Int = (1..2).random()
+//        if (number == 2) {
+//            notify.notify(project)
+//        }
+//
+//        return number;
+//    }
 
     fun getRandomNumber() = (1..2).random()
 }
