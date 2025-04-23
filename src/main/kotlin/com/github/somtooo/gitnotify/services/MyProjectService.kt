@@ -41,12 +41,16 @@ interface ReviewRequestedNotifier {
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
     private val githubRequests = GithubRequests()
     private val reasonKey = "review_requested"
+
+    // Get a non sticky ballon for errors
     private val notifier =
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
     private val logger = logger<GithubNotification>()
 
     private var retryCount = 0
     private val maxRetries = 5
+
+    // set this from the X-Poll_interval from response header of notifications
     private val initialBaseDelay = 3000L
 
     fun pollForNotifications() {
@@ -58,7 +62,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
             while (isActive) {
                 try {
                     val notificationThreadResponses = githubRequests.getRepositoryNotifications()
-                    // Reset retry count and delay on successful request
                     retryCount = 0
                     baseDelay = initialBaseDelay
 
@@ -84,23 +87,26 @@ class GithubNotification(private val project: Project, private val scope: Corout
                                     }
                                 }
                             }
-                        } catch (e: ClientRequestException) {
-                            logger.warn("Error processing notification ${notificationThreadResponse.id}: ${e.message}")
-                            notifyError("Failed to process notification: ${e.message}")
-                            if (e.response.status.value == 403 && e.response.headers["x-ratelimit-remaining"] != "0") {
-                                logger.error("Forbidden error: ${e.message}")
-                                notifyError("Access forbidden: ${e.message}")
-                                return@launch  // Kill the coroutine for forbidden errors
-                            }
-                            if (e.response.status.value in listOf(401, 404)) {
-                                return@launch  // Kill the coroutine for configuration issues
-                            }
-                            handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
-                                baseDelay = newDelay
-                            }
                         } catch (e: Exception) {
-                            logger.error("Unexpected error processing notification", e)
-                            notifyError("Unexpected error: ${e.message}")
+                            when (e) {
+                                is ClientRequestException -> {
+                                    if (e.message?.contains("rate limit", ignoreCase = true) == true) {
+                                        handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
+                                            baseDelay = newDelay
+                                        }
+                                    } else {
+                                        logger.error("Client error processing notification: ${e.message}")
+                                        notifyError("Error processing notification: ${e.message}")
+                                        return@launch
+                                    }
+                                }
+
+                                else -> {
+                                    logger.error("Unexpected error processing notification", e)
+                                    notifyError("Unexpected error: ${e.message}")
+                                    return@launch
+                                }
+                            }
                         }
                     }
 
@@ -116,30 +122,34 @@ class GithubNotification(private val project: Project, private val scope: Corout
                                     iterator.remove()
                                 }
                             }
+                            cleanupCounter = 0
                         } catch (e: Exception) {
                             logger.error("Error during cleanup process", e)
                             notifyError("Failed to cleanup notifications: ${e.message}")
+                            return@launch
                         }
-                        cleanupCounter = 0
                     }
 
-                } catch (e: ClientRequestException) {
-                    if (e.response.status.value == 403 && e.response.headers["x-ratelimit-remaining"] != "0") {
-                        logger.error("Forbidden error: ${e.message}")
-                        notifyError("Access forbidden: ${e.message}")
-                        return@launch  // Kill the coroutine for forbidden errors
-                    }
-                    if (e.response.status.value in listOf(401, 404)) {
-                        return@launch  // Kill the coroutine for configuration issues
-                    }
-                    handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
-                        baseDelay = newDelay
-                    }
-                    logger.error(e.message, e)
-                    notifyError(e.message)
                 } catch (e: Exception) {
-                    logger.error("Unexpected error in notification polling", e)
-                    notifyError("Unexpected error: ${e.message}")
+                    when (e) {
+                        is ClientRequestException -> {
+                            if (e.message?.contains("rate limit", ignoreCase = true) == true) {
+                                handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
+                                    baseDelay = newDelay
+                                }
+                            } else {
+                                logger.error("Client error in main loop: ${e.message}")
+                                notifyError("Client error: ${e.message}")
+                                return@launch
+                            }
+                        }
+
+                        else -> {
+                            logger.error("Unexpected error in notification polling", e)
+                            notifyError("Unexpected error: ${e.message}")
+                            return@launch
+                        }
+                    }
                 }
 
                 delay(baseDelay)
@@ -147,10 +157,11 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
+
     private fun handleRateLimiting(response: HttpResponse, currentDelay: Long): Long? {
-        // Check if it's actually a rate limit response
+        // This is not needed here let the top level function decide
         val isRateLimit = response.status.value == 429 ||
-                (response.status.value == 403 && response.headers["x-ratelimit-remaining"] == "0")
+                (response.status.value == 403)
 
         if (!isRateLimit) return null
 
