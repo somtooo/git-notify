@@ -2,7 +2,6 @@ package com.github.somtooo.gitnotify.services
 
 import com.github.somtooo.gitnotify.MyBundle
 import com.github.somtooo.gitnotify.lib.github.GithubRequests
-import com.github.somtooo.gitnotify.lib.github.data.GitHubApiException
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -15,6 +14,8 @@ import com.intellij.util.messages.Topic
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import io.ktor.client.*
+import io.ktor.client.plugins.*
+import io.ktor.client.statement.*
 import io.ktor.util.*
 import kotlinx.coroutines.*
 import java.io.File
@@ -35,6 +36,7 @@ interface ReviewRequestedNotifier {
     fun onReviewRequested(context: ReviewRequestedContext)
 }
 
+
 @Service(Service.Level.PROJECT)
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
     private val githubRequests = GithubRequests()
@@ -43,16 +45,22 @@ class GithubNotification(private val project: Project, private val scope: Corout
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
     private val logger = logger<GithubNotification>()
 
+    private var retryCount = 0
+    private val maxRetries = 5
+    private val initialBaseDelay = 3000L
+
     fun pollForNotifications() {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var cleanupCounter = 0
-        var baseDelay = 3000L
+        var baseDelay = initialBaseDelay
 
         scope.launch {
             while (isActive) {
                 try {
                     val notificationThreadResponses = githubRequests.getRepositoryNotifications()
-                    baseDelay = 3000L  // Reset delay on success
+                    // Reset retry count and delay on successful request
+                    retryCount = 0
+                    baseDelay = initialBaseDelay
 
                     for (notificationThreadResponse in notificationThreadResponses) {
                         try {
@@ -76,11 +84,19 @@ class GithubNotification(private val project: Project, private val scope: Corout
                                     }
                                 }
                             }
-                        } catch (e: GitHubApiException) {
+                        } catch (e: ClientRequestException) {
                             logger.warn("Error processing notification ${notificationThreadResponse.id}: ${e.message}")
                             notifyError("Failed to process notification: ${e.message}")
-                            if (e.statusCode in listOf(401, 404)) {
+                            if (e.response.status.value == 403 && e.response.headers["x-ratelimit-remaining"] != "0") {
+                                logger.error("Forbidden error: ${e.message}")
+                                notifyError("Access forbidden: ${e.message}")
+                                return@launch  // Kill the coroutine for forbidden errors
+                            }
+                            if (e.response.status.value in listOf(401, 404)) {
                                 return@launch  // Kill the coroutine for configuration issues
+                            }
+                            handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
+                                baseDelay = newDelay
                             }
                         } catch (e: Exception) {
                             logger.error("Unexpected error processing notification", e)
@@ -88,7 +104,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         }
                     }
 
-                    // figure out this rate limit stuff
                     cleanupCounter++
                     if (cleanupCounter >= 1200) {
                         try {
@@ -108,23 +123,20 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         cleanupCounter = 0
                     }
 
-                } catch (e: GitHubApiException) {
-                    val message = when (e.statusCode) {
-                        401 -> "GitHub authentication failed. Please check your token."
-                        403 -> {
-                            baseDelay = 60000L  // Increase delay to 1 minute for rate limit
-                            "GitHub API rate limit exceeded or insufficient permissions."
-                        }
-
-                        404 -> "Resource not found. Please check repository settings."
-                        else -> "GitHub API error: ${e.message}"
+                } catch (e: ClientRequestException) {
+                    if (e.response.status.value == 403 && e.response.headers["x-ratelimit-remaining"] != "0") {
+                        logger.error("Forbidden error: ${e.message}")
+                        notifyError("Access forbidden: ${e.message}")
+                        return@launch  // Kill the coroutine for forbidden errors
                     }
-                    logger.error(message, e)
-                    notifyError(message)
-
-                    if (e.statusCode in listOf(401, 404)) {
+                    if (e.response.status.value in listOf(401, 404)) {
                         return@launch  // Kill the coroutine for configuration issues
                     }
+                    handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
+                        baseDelay = newDelay
+                    }
+                    logger.error(e.message, e)
+                    notifyError(e.message)
                 } catch (e: Exception) {
                     logger.error("Unexpected error in notification polling", e)
                     notifyError("Unexpected error: ${e.message}")
@@ -132,6 +144,49 @@ class GithubNotification(private val project: Project, private val scope: Corout
 
                 delay(baseDelay)
             }
+        }
+    }
+
+    private fun handleRateLimiting(response: HttpResponse, currentDelay: Long): Long? {
+        // Check if it's actually a rate limit response
+        val isRateLimit = response.status.value == 429 ||
+                (response.status.value == 403 && response.headers["x-ratelimit-remaining"] == "0")
+
+        if (!isRateLimit) return null
+
+        // Primary rate limit check
+        if (response.headers["x-ratelimit-remaining"] == "0") {
+            val resetTime = response.headers["x-ratelimit-reset"]?.toLongOrNull()
+            if (resetTime != null) {
+                val currentTime = System.currentTimeMillis() / 1000
+                val newDelay = (resetTime - currentTime).coerceAtLeast(0) * 1000
+                logger.warn("Primary rate limit exceeded. Setting delay to ${newDelay / 1000} seconds before retrying")
+                notifyError("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
+                retryCount = 0 // Reset retry count for primary rate limit
+                return newDelay
+            }
+        }
+
+        // Secondary rate limit check
+        val retryAfter = response.headers["retry-after"]?.toLongOrNull()
+        if (retryAfter != null) {
+            val newDelay = retryAfter * 1000
+            logger.warn("Secondary rate limit exceeded. Retry after $retryAfter seconds")
+            notifyError("Secondary rate limit exceeded. Will retry in $retryAfter seconds")
+            return newDelay
+        }
+
+        // Exponential backoff for secondary rate limit without retry-after header
+        if (retryCount < maxRetries) {
+            retryCount++
+            val exponentialDelay = (60000L * (1L shl (retryCount - 1))).coerceAtMost(3600000L) // Max 1 hour
+            logger.warn("Secondary rate limit exceeded. Using exponential backoff: ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
+            notifyError("Secondary rate limit exceeded. Will retry in ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
+            return exponentialDelay
+        } else {
+            logger.error("Maximum retry attempts ($maxRetries) reached for secondary rate limit")
+            notifyError("Maximum retry attempts reached for secondary rate limit. Please try again later.")
+            return currentDelay
         }
     }
 

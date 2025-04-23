@@ -60,7 +60,8 @@ class ConfigurationCheckerServiceTest : BasePlatformTestCase() {
         val spiedService = spy(configurationCheckerService)
 
         val rcFileKeyValuePairs = mutableMapOf<String, String>()
-        rcFileKeyValuePairs[configurationCheckerService.githubTokenKey] = System.getenv(configurationCheckerService.githubTokenKey)
+        rcFileKeyValuePairs[ConfigurationCheckerService.GIT_HUB_TOKEN_KEY] =
+            System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)
 
         doReturn(rcFileKeyValuePairs).`when`(spiedService).parseRcFile(anyString())
 
@@ -69,7 +70,7 @@ class ConfigurationCheckerServiceTest : BasePlatformTestCase() {
     }
 
     @Test
-    fun  `it can connect to the internet`() {
+    fun `it can connect to the internet`() {
         assertTrue(configurationCheckerService.canConnectToTheInternet())
     }
 

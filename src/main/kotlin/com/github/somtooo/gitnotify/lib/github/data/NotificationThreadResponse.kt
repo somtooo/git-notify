@@ -1,3 +1,5 @@
+@file:Suppress("PROVIDED_RUNTIME_TOO_LOW")
+
 package com.github.somtooo.gitnotify.lib.github.data
 
 import kotlinx.serialization.SerialName

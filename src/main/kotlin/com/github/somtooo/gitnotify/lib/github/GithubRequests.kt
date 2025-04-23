@@ -1,13 +1,11 @@
 package com.github.somtooo.gitnotify.lib.github
 
-import com.github.somtooo.gitnotify.lib.github.data.GitHubApiException
 import com.github.somtooo.gitnotify.lib.github.data.NotificationThreadResponse
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestResponse
 import com.github.somtooo.gitnotify.services.ConfigurationCheckerService
 import com.github.somtooo.gitnotify.services.GithubUrlPathParameters
 import io.ktor.client.*
 import io.ktor.client.call.*
-import io.ktor.client.network.sockets.*
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
@@ -17,6 +15,7 @@ import kotlinx.serialization.json.Json
 
 class GithubRequests {
     private val client = HttpClient {
+        expectSuccess = true
         install(ContentNegotiation) {
             json(Json {
                 ignoreUnknownKeys = true
@@ -28,6 +27,10 @@ class GithubRequests {
             connectTimeoutMillis = 15000
         }
     }
+    private var etag: String? = null
+    private var lastNotifications: List<NotificationThreadResponse> = emptyList()
+    private var pullRequestLastModified: MutableMap<String, String> = mutableMapOf()
+    private var lastPullRequest: MutableMap<String, PullRequestResponse> = mutableMapOf()
 
     suspend fun getRepositoryNotifications(): List<NotificationThreadResponse> {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
@@ -35,20 +38,33 @@ class GithubRequests {
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/notifications"
 
         try {
-            return client.get(url) { buildRequest() }.body()
-        } catch (e: ClientRequestException) {
-            when (e.response.status.value) {
-                401 -> throw GitHubApiException("Unauthorized: Check your GitHub token", 401, e)
-                403 -> throw GitHubApiException("Forbidden: Rate limit exceeded or token lacks permissions", 403, e)
-                404 -> throw GitHubApiException("Repository not found", 404, e)
-                else -> throw GitHubApiException("HTTP error: ${e.response.status.value}", e.response.status.value, e)
+            val response = client.get(url) {
+                buildRequest()
+                etag?.let {
+                    headers {
+                        append("If-None-Match", it)
+                    }
+                }
             }
-        } catch (e: ServerResponseException) {
-            throw GitHubApiException("GitHub server error: ${e.response.status.value}", e.response.status.value, e)
-        } catch (e: SocketTimeoutException) {
-            throw GitHubApiException("Connection timeout", cause = e)
-        } catch (e: Exception) {
-            throw GitHubApiException("Failed to fetch notifications: ${e.message}", cause = e)
+
+            // Store the ETag header for future requests
+            response.headers["etag"]?.let {
+                etag = it
+            }
+
+            val notifications = response.body<List<NotificationThreadResponse>>()
+            lastNotifications = notifications
+            return notifications
+
+        } catch (e: RedirectResponseException) {
+            if (e.response.status == HttpStatusCode.NotModified) {
+                // Even on 304, update the ETag if present
+                e.response.headers["etag"]?.let {
+                    etag = it
+                }
+                return lastNotifications
+            }
+            throw e
         }
     }
 
@@ -58,45 +74,61 @@ class GithubRequests {
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/pulls/$pullNumber"
 
         try {
-            return client.get(url) { buildRequest() }.body()
-        } catch (e: ClientRequestException) {
-            when (e.response.status.value) {
-                401 -> throw GitHubApiException("Unauthorized: Check your GitHub token", 401, e)
-                403 -> throw GitHubApiException("Forbidden: Rate limit exceeded or token lacks permissions", 403, e)
-                404 -> throw GitHubApiException("Pull request not found", 404, e)
-                else -> throw GitHubApiException("HTTP error: ${e.response.status.value}", e.response.status.value, e)
+            val response = client.get(url) {
+                buildRequest()
+                pullRequestLastModified[pullNumber]?.let {
+                    headers {
+                        append("If-Modified-Since", it)
+                    }
+                }
             }
-        } catch (e: ServerResponseException) {
-            throw GitHubApiException("GitHub server error: ${e.response.status.value}", e.response.status.value, e)
-        } catch (e: Exception) {
-            throw GitHubApiException("Failed to fetch pull request: ${e.message}", cause = e)
+
+            // Store the Last-Modified header for future requests
+            response.headers["last-modified"]?.let {
+                pullRequestLastModified[pullNumber] = it
+            }
+
+            val pullRequest = response.body<PullRequestResponse>()
+            lastPullRequest[pullNumber] = pullRequest
+            return pullRequest
+
+        } catch (e: RedirectResponseException) {
+            if (e.response.status == HttpStatusCode.NotModified) {
+                // Even on 304, update the Last-Modified if present
+                e.response.headers["last-modified"]?.let {
+                    pullRequestLastModified[pullNumber] = it
+                }
+                return lastPullRequest[pullNumber]
+                    ?: throw IllegalStateException("No cached pull request found for $pullNumber")
+            }
+            throw e
         }
     }
 
+    // check what headers this returns
     suspend fun markNotificationThreadAsRead(threadId: String) {
         val url = "https://api.github.com/notifications/threads/$threadId"
-
         try {
-            client.patch(url) { buildRequest() }
-        } catch (e: ClientRequestException) {
-            when (e.response.status.value) {
-                401 -> throw GitHubApiException("Unauthorized: Check your GitHub token", 401, e)
-                403 -> throw GitHubApiException("Forbidden: Rate limit exceeded or token lacks permissions", 403, e)
-                404 -> throw GitHubApiException("Notification thread not found", 404, e)
-                else -> throw GitHubApiException("HTTP error: ${e.response.status.value}", e.response.status.value, e)
+            client.patch(url) {
+                buildRequest()
             }
-        } catch (e: ServerResponseException) {
-            throw GitHubApiException("GitHub server error: ${e.response.status.value}", e.response.status.value, e)
-        } catch (e: Exception) {
-            throw GitHubApiException("Failed to mark notification as read: ${e.message}", cause = e)
+        } catch (e: RedirectResponseException) {
+            if (e.response.status !== HttpStatusCode.NotModified) {
+                throw e
+            }
         }
     }
 
-    private fun buildRequest() = HttpRequestBuilder {
+    private fun buildRequest() = HttpRequestBuilder().apply {
         headers {
             append("Authorization", System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY))
             append("Accept", "application/vnd.github+json")
             append("X-GitHub-Api-Version", "2022-11-28")
         }
     }
+
+    companion object {
+        const val DEFAULT_POLL_INTERVAL = 60L
+    }
+
 }
