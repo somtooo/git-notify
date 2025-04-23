@@ -1,7 +1,8 @@
 package com.github.somtooo.gitnotify.lib.github
 
 import com.github.somtooo.gitnotify.lib.github.data.NotificationThreadResponse
-import com.github.somtooo.gitnotify.lib.github.data.PullRequestResponse
+import com.github.somtooo.gitnotify.lib.github.data.PullRequest
+import com.github.somtooo.gitnotify.lib.github.data.PullRequestsResponse
 import com.github.somtooo.gitnotify.services.ConfigurationCheckerService
 import com.github.somtooo.gitnotify.services.GithubUrlPathParameters
 import io.ktor.client.*
@@ -29,8 +30,6 @@ class GithubRequests {
     }
     private var etag: String? = null
     private var lastNotifications: List<NotificationThreadResponse> = emptyList()
-    private var pullRequestLastModified: MutableMap<String, String> = mutableMapOf()
-    private var lastPullRequest: MutableMap<String, PullRequestResponse> = mutableMapOf()
 
     suspend fun getRepositoryNotifications(): List<NotificationThreadResponse> {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
@@ -68,54 +67,29 @@ class GithubRequests {
         }
     }
 
-    suspend fun getAPullRequest(pullNumber: String): PullRequestResponse {
+    suspend fun getAPullRequest(pullNumber: String, lastModified: String? = null): PullRequestsResponse {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
         val url =
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/pulls/$pullNumber"
 
-        try {
-            val response = client.get(url) {
-                buildRequest()
-                pullRequestLastModified[pullNumber]?.let {
-                    headers {
-                        append("If-Modified-Since", it)
-                    }
+        val response = client.get(url) {
+            buildRequest()
+            headers {
+                lastModified?.let {
+                    append("If-Modified-Since", lastModified)
                 }
             }
-
-            // Store the Last-Modified header for future requests
-            response.headers["last-modified"]?.let {
-                pullRequestLastModified[pullNumber] = it
-            }
-
-            val pullRequest = response.body<PullRequestResponse>()
-            lastPullRequest[pullNumber] = pullRequest
-            return pullRequest
-
-        } catch (e: RedirectResponseException) {
-            if (e.response.status == HttpStatusCode.NotModified) {
-                // Even on 304, update the Last-Modified if present
-                e.response.headers["last-modified"]?.let {
-                    pullRequestLastModified[pullNumber] = it
-                }
-                return lastPullRequest[pullNumber]
-                    ?: throw IllegalStateException("No cached pull request found for $pullNumber")
-            }
-            throw e
         }
+
+        val pullRequest = response.body<PullRequest>()
+        return PullRequestsResponse(pullRequest = pullRequest, headers = response.headers)
     }
 
     // check what headers this returns
     suspend fun markNotificationThreadAsRead(threadId: String) {
         val url = "https://api.github.com/notifications/threads/$threadId"
-        try {
-            client.patch(url) {
-                buildRequest()
-            }
-        } catch (e: RedirectResponseException) {
-            if (e.response.status !== HttpStatusCode.NotModified) {
-                throw e
-            }
+        client.patch(url) {
+            buildRequest()
         }
     }
 
