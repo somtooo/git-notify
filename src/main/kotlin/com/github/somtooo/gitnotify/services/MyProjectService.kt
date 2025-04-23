@@ -51,6 +51,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
 
     // set this from the X-Poll_interval from response header of notifications
     // let the notification response include its header so it can be used to configure base delay
+    // lets keep at 3 seconds unless x-poll is bigger than that
     private val initialBaseDelay = 3000L
     private var pullRequestLastModified: Map<String, String> = mapOf()
     private var lastPullRequest: Map<String, PullRequest> = mapOf()
