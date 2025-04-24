@@ -39,13 +39,6 @@ interface ReviewRequestedNotifier {
 
 @Service(Service.Level.PROJECT)
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
-
-    companion object {
-        fun getInstance(project: Project): GithubNotification {
-            return project.service()
-        }
-    }
-
     private var githubRequests = GithubRequests()
     private val reasonKey = "review_requested"
 
@@ -60,6 +53,12 @@ class GithubNotification(private val project: Project, private val scope: Corout
     private var pullRequestLastModified: Map<String, String> = mapOf()
     private var lastPullRequest: Map<String, PullRequest> = mapOf()
     private var defaultXPollHeader = 60000L
+
+    companion object {
+        fun getInstance(project: Project): GithubNotification {
+            return project.service()
+        }
+    }
 
     // Use for testing to mock requests
     internal fun setGithubRequestsForTest(instance: GithubNotification, requests: GithubRequests) {
