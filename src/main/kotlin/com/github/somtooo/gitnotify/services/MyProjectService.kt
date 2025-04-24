@@ -41,37 +41,36 @@ class GithubNotification(private val project: Project, private val scope: Corout
     private val githubRequests = GithubRequests()
     private val reasonKey = "review_requested"
 
-    // Get a non sticky ballon for errors
     private val notifier =
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
+    private val errorNotifier = NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon")
     private val logger = logger<GithubNotification>()
 
-    private var retryCount = 0
     private val maxRetries = 5
 
-    // set this from the X-Poll_interval from response header of notifications
-    // let the notification response include its header so it can be used to configure base delay
-    // lets keep at 3 seconds unless x-poll is bigger than that
     private val initialBaseDelay = 3000L
     private var pullRequestLastModified: Map<String, String> = mapOf()
     private var lastPullRequest: Map<String, PullRequest> = mapOf()
+    private var defaultXPollHeader = 60000L
 
     fun pollForNotifications() {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var cleanupCounter = 0
         var baseDelay = initialBaseDelay
         var cleanupInterval: Long
+        var retryCount = 0
 
         scope.launch {
             while (isActive) {
                 try {
                     val notificationThreadResponses = githubRequests.getRepositoryNotifications()
-                    retryCount = 0
-                    //should be set from the response header
-                    baseDelay = initialBaseDelay
+                    notificationThreadResponses.headers["x-poll-interval"]?.let {
+                        val pollInterval = it.toLong()
+                        baseDelay = pollInterval * baseDelay / defaultXPollHeader
+                    }
                     cleanupInterval = 3600 / (baseDelay / 1000)
 
-                    for (notificationThreadResponse in notificationThreadResponses) {
+                    for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
                         if (notificationThreadResponse.reason == reasonKey) {
                             if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null) {
                                 val pullRequestUrl = notificationThreadResponse.subject.url
@@ -107,29 +106,36 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         cleanupCounter = 0
                     }
                     cleanupCounter++
+                    retryCount = 0
                 } catch (e: Exception) {
-                    when (e) {
-                        is ClientRequestException -> {
-                            if (e.message.contains("rate limit", ignoreCase = true)) {
-                                handleRateLimiting(e.response, baseDelay)?.let { newDelay ->
-                                    baseDelay = newDelay
-                                }
-                            } else {
-                                logger.error("Client error in main loop: ${e.message}")
-                                notifyError("Client error: ${e.message}")
-                                return@launch
-                            }
-                        }
-
-                        else -> {
-                            logger.error("Unexpected error in notification polling", e)
-                            notifyError("Unexpected error: ${e.message}")
-                            return@launch
-                        }
-                    }
+                    retryCount = retryCount + 1;
+                    baseDelay = handleRateLimitException(e, retryCount)
                 }
 
                 delay(baseDelay)
+            }
+        }
+    }
+
+    private fun handleRateLimitException(e: Exception, retryCount: Int): Long {
+        when (e) {
+            is ClientRequestException -> {
+                val isRateLimitIssue = e.message.contains("rate limit", ignoreCase = true) &&
+                        e.response.status in listOf(HttpStatusCode.TooManyRequests, HttpStatusCode.Forbidden)
+
+                if (isRateLimitIssue) {
+                    return handleRateLimiting(e.response, retryCount)
+                }
+
+                logger.error("Client error in main loop: ${e.message}")
+                notifyError("Client error: ${e.message}")
+                throw e
+            }
+
+            else -> {
+                logger.error("Unexpected error in notification polling", e)
+                notifyError("Unexpected error: ${e.message}")
+                throw e
             }
         }
     }
@@ -159,12 +165,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
-    private fun handleRateLimiting(response: HttpResponse, currentDelay: Long): Long? {
-        // This is not needed here let the top level function decide
-        val isRateLimit = response.status.value == 429 ||
-                (response.status.value == 403)
-
-        if (!isRateLimit) return null
+    private fun handleRateLimiting(response: HttpResponse, retryCount: Int): Long {
 
         // Primary rate limit check
         if (response.headers["x-ratelimit-remaining"] == "0") {
@@ -174,7 +175,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
                 val newDelay = (resetTime - currentTime).coerceAtLeast(0) * 1000
                 logger.warn("Primary rate limit exceeded. Setting delay to ${newDelay / 1000} seconds before retrying")
                 notifyError("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
-                retryCount = 0 // Reset retry count for primary rate limit
                 return newDelay
             }
         }
@@ -190,7 +190,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
 
         // Exponential backoff for secondary rate limit without retry-after header
         if (retryCount < maxRetries) {
-            retryCount++
             val exponentialDelay = (60000L * (1L shl (retryCount - 1))).coerceAtMost(3600000L) // Max 1 hour
             logger.warn("Secondary rate limit exceeded. Using exponential backoff: ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
             notifyError("Secondary rate limit exceeded. Will retry in ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
@@ -198,7 +197,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         } else {
             logger.error("Maximum retry attempts ($maxRetries) reached for secondary rate limit")
             notifyError("Maximum retry attempts reached for secondary rate limit. Please try again later.")
-            return currentDelay
+            throw Exception("Maximum retry attempts reached for secondary rate limit")
         }
     }
 
@@ -215,7 +214,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     private fun notifyError(content: String) {
-        notifier.createNotification(
+        errorNotifier.createNotification(
             title = "Git-Notify Error",
             content,
             NotificationType.ERROR

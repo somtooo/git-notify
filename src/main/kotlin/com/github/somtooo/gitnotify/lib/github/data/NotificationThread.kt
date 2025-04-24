@@ -2,11 +2,17 @@
 
 package com.github.somtooo.gitnotify.lib.github.data
 
+import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-@Serializable
 data class NotificationThreadResponse(
+    val headers: Headers,
+    val notificationThreads: List<NotificationThread>,
+)
+
+@Serializable
+data class NotificationThread(
     val id: String,
     val repository: Repository,
     val subject: Subject,

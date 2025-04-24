@@ -1,5 +1,6 @@
 package com.github.somtooo.gitnotify.lib.github
 
+import com.github.somtooo.gitnotify.lib.github.data.NotificationThread
 import com.github.somtooo.gitnotify.lib.github.data.NotificationThreadResponse
 import com.github.somtooo.gitnotify.lib.github.data.PullRequest
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestsResponse
@@ -29,9 +30,9 @@ class GithubRequests {
         }
     }
     private var etag: String? = null
-    private var lastNotifications: List<NotificationThreadResponse> = emptyList()
+    private var lastNotifications: List<NotificationThread> = emptyList()
 
-    suspend fun getRepositoryNotifications(): List<NotificationThreadResponse> {
+    suspend fun getRepositoryNotifications(): NotificationThreadResponse {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
         val url =
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/notifications"
@@ -51,9 +52,9 @@ class GithubRequests {
                 etag = it
             }
 
-            val notifications = response.body<List<NotificationThreadResponse>>()
+            val notifications = response.body<List<NotificationThread>>()
             lastNotifications = notifications
-            return notifications
+            return NotificationThreadResponse(notificationThreads = notifications, headers = response.headers)
 
         } catch (e: RedirectResponseException) {
             if (e.response.status == HttpStatusCode.NotModified) {
@@ -61,7 +62,7 @@ class GithubRequests {
                 e.response.headers["etag"]?.let {
                     etag = it
                 }
-                return lastNotifications
+                return NotificationThreadResponse(notificationThreads = lastNotifications, headers = e.response.headers)
             }
             throw e
         }

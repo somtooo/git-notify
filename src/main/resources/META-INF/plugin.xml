@@ -12,7 +12,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.somtooo.gitnotify.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <notificationGroup displayType="STICKY_BALLOON" id="StickyBalloon"/>
-        <notificationGroup displayType="BALLOON" id="InfoNotification"/>
+        <notificationGroup displayType="BALLOON" id="NonStickyBalloon"/>
         <postStartupActivity
                 implementation="com.github.somtooo.gitnotify.extensions.ConfigurationCheckerStartupActivity"/>
     </extensions>

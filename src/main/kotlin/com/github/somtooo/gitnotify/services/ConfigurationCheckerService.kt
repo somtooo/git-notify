@@ -68,7 +68,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
             if (!result) return false
         }
 
-        val notify = NotificationGroupManager.getInstance().getNotificationGroup("InfoNotification")
+        val notify = NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon")
             .createNotification(title = "Git-Notify", "Validation Succesfull", NotificationType.INFORMATION)
         notify.notify(project)
         return true
