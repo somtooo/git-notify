@@ -217,7 +217,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
         val file = File(filePath)
 
         if (!file.exists()) {
-            logger<MyProjectService>().debug(".gitnotifyrc file does not exist")
+            logger<ConfigurationCheckerService>().debug(".gitnotifyrc file does not exist")
             throw FileNotFoundException("RC File does not exist");
         }
 

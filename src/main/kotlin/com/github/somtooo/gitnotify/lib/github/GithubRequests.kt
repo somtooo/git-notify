@@ -16,6 +16,7 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 
 class GithubRequests {
+    
     private val client = HttpClient {
         expectSuccess = true
         install(ContentNegotiation) {

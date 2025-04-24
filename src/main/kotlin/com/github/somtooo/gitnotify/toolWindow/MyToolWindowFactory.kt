@@ -1,5 +1,7 @@
 package com.github.somtooo.gitnotify.toolWindow
 
+import com.github.somtooo.gitnotify.MyBundle
+import com.github.somtooo.gitnotify.services.ConfigurationCheckerService
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
@@ -8,9 +10,6 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.content.ContentFactory
-import com.github.somtooo.gitnotify.MyBundle
-import com.github.somtooo.gitnotify.services.ConfigurationCheckerService
-import com.github.somtooo.gitnotify.services.MyProjectService
 import javax.swing.JButton
 
 

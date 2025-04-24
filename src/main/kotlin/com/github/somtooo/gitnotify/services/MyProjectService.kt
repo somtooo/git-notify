@@ -7,6 +7,7 @@ import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
@@ -38,7 +39,14 @@ interface ReviewRequestedNotifier {
 
 @Service(Service.Level.PROJECT)
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
-    private val githubRequests = GithubRequests()
+
+    companion object {
+        fun getInstance(project: Project): GithubNotification {
+            return project.service()
+        }
+    }
+
+    private var githubRequests = GithubRequests()
     private val reasonKey = "review_requested"
 
     private val notifier =
@@ -52,6 +60,11 @@ class GithubNotification(private val project: Project, private val scope: Corout
     private var pullRequestLastModified: Map<String, String> = mapOf()
     private var lastPullRequest: Map<String, PullRequest> = mapOf()
     private var defaultXPollHeader = 60000L
+
+    // Use for testing to mock requests
+    internal fun setGithubRequestsForTest(instance: GithubNotification, requests: GithubRequests) {
+        instance.githubRequests = requests
+    }
 
     fun pollForNotifications() {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
