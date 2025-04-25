@@ -16,7 +16,8 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 
 class GithubRequests {
-    
+
+
     private val client = HttpClient {
         expectSuccess = true
         install(ContentNegotiation) {
@@ -40,7 +41,9 @@ class GithubRequests {
 
         try {
             val response = client.get(url) {
-                buildRequest()
+                headers {
+                    addGithubHeaders()
+                }
                 etag?.let {
                     headers {
                         append("If-None-Match", it)
@@ -66,6 +69,10 @@ class GithubRequests {
                 return NotificationThreadResponse(notificationThreads = lastNotifications, headers = e.response.headers)
             }
             throw e
+        } catch (e: ClientRequestException) {
+            val response = e.response
+            throw e
+
         }
     }
 
@@ -75,8 +82,8 @@ class GithubRequests {
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/pulls/$pullNumber"
 
         val response = client.get(url) {
-            buildRequest()
             headers {
+                addGithubHeaders()
                 lastModified?.let {
                     append("If-Modified-Since", lastModified)
                 }
@@ -91,16 +98,16 @@ class GithubRequests {
     suspend fun markNotificationThreadAsRead(threadId: String) {
         val url = "https://api.github.com/notifications/threads/$threadId"
         client.patch(url) {
-            buildRequest()
+            headers {
+                addGithubHeaders()
+            }
         }
     }
 
-    private fun buildRequest() = HttpRequestBuilder().apply {
-        headers {
-            append("Authorization", System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY))
-            append("Accept", "application/vnd.github+json")
-            append("X-GitHub-Api-Version", "2022-11-28")
-        }
+    private fun HeadersBuilder.addGithubHeaders() {
+        append("Authorization", "Bearer ${System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)}")
+        append("Accept", "application/vnd.github+json")
+        append("X-GitHub-Api-Version", "2022-11-28")
     }
 
     companion object {
