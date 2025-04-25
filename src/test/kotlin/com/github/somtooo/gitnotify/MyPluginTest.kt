@@ -1,4 +1,4 @@
-//package com.github.somtooo.gitnotify
+package com.github.somtooo.gitnotify
 //
 //import com.github.somtooo.gitnotify.services.MyProjectService
 //import com.intellij.ide.highlighter.XmlFileType
@@ -44,33 +44,33 @@
 //        assertNotNull(projectService.buildUrl(project))
 //    }
 //
-////    fun testGetRandomNumberNotify() {
-////        var notificationShown = false
-////        val connection = project.messageBus.connect()
-////
-////        connection.subscribe(Notifications.TOPIC, object : Notifications {
-////            override fun notify(notification: Notification) {
-////                if (notification.groupId == "GithubPullRequest" &&
-////                    notification.content == "Random Number is 2" &&
-////                    notification.type == NotificationType.INFORMATION) {
-////                    notificationShown = true
-////                }
-////            }
-////        })
-////
-////        val projectService = project.service<MyProjectService>()
-////        val result = projectService.getRandomNumberNotify(project)
-////        assertTrue(result in 1..2)
-////
-////        // fix this test is broken
-////        if (result == 2) {
-////            assertTrue("Notification should have been shown when number is 2", notificationShown)
-////        } else {
-////            assertFalse("Notification should not have been shown when number is 1", notificationShown)
-////        }
-////
-////        connection.disconnect()
-////    }
+//    fun testGetRandomNumberNotify() {
+//        var notificationShown = false
+//        val connection = project.messageBus.connect()
 //
-//    override fun getTestDataPath() = "src/test/testData/rename"
+//        connection.subscribe(Notifications.TOPIC, object : Notifications {
+//            override fun notify(notification: Notification) {
+//                if (notification.groupId == "GithubPullRequest" &&
+//                    notification.content == "Random Number is 2" &&
+//                    notification.type == NotificationType.INFORMATION) {
+//                    notificationShown = true
+//                }
+//            }
+//        })
+//
+//        val projectService = project.service<MyProjectService>()
+//        val result = projectService.getRandomNumberNotify(project)
+//        assertTrue(result in 1..2)
+//
+//        // fix this test is broken
+//        if (result == 2) {
+//            assertTrue("Notification should have been shown when number is 2", notificationShown)
+//        } else {
+//            assertFalse("Notification should not have been shown when number is 1", notificationShown)
+//        }
+//
+//        connection.disconnect()
+//    }
+
+//    override fun getTestDataPath() = "src/test/testData/rename
 //}

@@ -15,7 +15,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 
-class GithubRequests {
+open class GithubRequests {
 
 
     private val client = HttpClient {
@@ -34,7 +34,7 @@ class GithubRequests {
     private var etag: String? = null
     private var lastNotifications: List<NotificationThread> = emptyList()
 
-    suspend fun getRepositoryNotifications(): NotificationThreadResponse {
+    open suspend fun getRepositoryNotifications(): NotificationThreadResponse {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
         val url =
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/notifications"
@@ -76,7 +76,7 @@ class GithubRequests {
         }
     }
 
-    suspend fun getAPullRequest(pullNumber: String, lastModified: String? = null): PullRequestsResponse {
+    open suspend fun getAPullRequest(pullNumber: String, lastModified: String? = null): PullRequestsResponse {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
         val url =
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/pulls/$pullNumber"
@@ -94,8 +94,8 @@ class GithubRequests {
         return PullRequestsResponse(pullRequest = pullRequest, headers = response.headers)
     }
 
-    // check what headers this returns
-    suspend fun markNotificationThreadAsRead(threadId: String) {
+    // Skip no need to test
+    open suspend fun markNotificationThreadAsRead(threadId: String) {
         val url = "https://api.github.com/notifications/threads/$threadId"
         client.patch(url) {
             headers {
