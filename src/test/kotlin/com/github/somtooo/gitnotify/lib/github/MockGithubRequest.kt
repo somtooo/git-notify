@@ -8,7 +8,7 @@ import io.ktor.http.*
 import kotlinx.serialization.json.Json
 import java.io.File
 
-class MockGithubRequest : GithubRequests() {
+open class MockGithubRequest : GithubRequests() {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true

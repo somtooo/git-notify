@@ -15,10 +15,8 @@ import io.ktor.client.plugins.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.util.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import kotlin.time.TimeSource
 
 data class ReviewRequestedContext(
     val pullRequestUrl: String,
@@ -65,14 +63,16 @@ class GithubNotification(private val project: Project, private val scope: Corout
         instance.githubRequests = requests
     }
 
-    fun pollForNotifications() {
+    fun pollForNotifications(
+        timeSource: TimeSource = TimeSource.Monotonic
+    ): Job {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
-        var cleanupCounter = 0
         var baseDelay = initialBaseDelay
-        var cleanupInterval: Long
         var retryCount = 0
+        var lastCleanupTime = timeSource.markNow()
+        val hourInMillis = 3600000L
 
-        scope.launch {
+        return scope.launch {
             while (isActive) {
                 try {
                     val notificationThreadResponses = githubRequests.getRepositoryNotifications()
@@ -80,11 +80,10 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         val pollInterval = it.toLong()
                         baseDelay = pollInterval * baseDelay / defaultXPollHeader
                     }
-                    cleanupInterval = 3600 / (baseDelay / 1000)
 
                     for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
                         if (notificationThreadResponse.reason == reasonKey) {
-                            if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null) {
+                            if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
                                 val pullRequestUrl = notificationThreadResponse.subject.url
                                 val urlPaths = pullRequestUrl.split(Regex("//|/"))
                                 val pullRequestNumber = urlPaths.last()
@@ -105,7 +104,8 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         }
                     }
 
-                    if (cleanupCounter >= cleanupInterval) {
+                    val currentMark = lastCleanupTime.elapsedNow().inWholeMilliseconds
+                    if (currentMark > hourInMillis) {
                         val iterator = notificationThreadIdToPullRequestNumber.iterator()
                         while (iterator.hasNext()) {
                             val entry = iterator.next()
@@ -115,39 +115,42 @@ class GithubNotification(private val project: Project, private val scope: Corout
                                 iterator.remove()
                             }
                         }
-                        cleanupCounter = 0
+                        lastCleanupTime = timeSource.markNow()
                     }
-                    cleanupCounter++
                     retryCount = 0
                 } catch (e: Exception) {
-                    retryCount = retryCount + 1;
-                    baseDelay = handleRateLimitException(e, retryCount)
+                    retryCount = retryCount + 1
+                    val result = handleRateLimitException(e, retryCount)
+                    if (result.second) {
+                        return@launch
+                    }
+                    baseDelay = result.first
                 }
-
                 delay(baseDelay)
             }
         }
     }
 
-    private fun handleRateLimitException(e: Exception, retryCount: Int): Long {
+
+    private fun handleRateLimitException(e: Exception, retryCount: Int): Pair<Long, Boolean> {
         when (e) {
             is ClientRequestException -> {
                 val isRateLimitIssue = e.message.contains("rate limit", ignoreCase = true) &&
                         e.response.status in listOf(HttpStatusCode.TooManyRequests, HttpStatusCode.Forbidden)
 
                 if (isRateLimitIssue) {
-                    return handleRateLimiting(e.response, retryCount)
+                    return Pair(handleRateLimiting(e.response, retryCount), false)
                 }
 
                 logger.error("Client error in main loop: ${e.message}")
                 notifyError("Client error: ${e.message}")
-                throw e
+                return Pair(0, true)
             }
 
             else -> {
-                logger.error("Unexpected error in notification polling", e)
+                logger.debug("Unexpected error in notification polling", e)
                 notifyError("Unexpected error: ${e.message}")
-                throw e
+                return Pair(0, true)
             }
         }
     }
@@ -207,9 +210,10 @@ class GithubNotification(private val project: Project, private val scope: Corout
             notifyError("Secondary rate limit exceeded. Will retry in ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
             return exponentialDelay
         } else {
-            logger.error("Maximum retry attempts ($maxRetries) reached for secondary rate limit")
-            notifyError("Maximum retry attempts reached for secondary rate limit. Please try again later.")
-            throw Exception("Maximum retry attempts reached for secondary rate limit")
+            return 0;
+//            logger.error("Maximum retry attempts ($maxRetries) reached for secondary rate limit")
+//            notifyError("Maximum retry attempts reached for secondary rate limit. Please try again later.")
+//            throw Exception("Maximum retry attempts reached for secondary rate limit")
         }
     }
 
