@@ -9,17 +9,11 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.util.concurrent.TimeUnit
-import kotlin.time.ExperimentalTime
-import kotlin.time.TestTimeSource
-import kotlin.time.TimeSource
 
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -39,7 +33,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
         // Clean up resources if needed
     }
 
-    @OptIn(ExperimentalTime::class)
+
     @Test
     fun testNotificationIsShownForMockGithubRequest() {
         val mockRequests = MockGithubRequest()
@@ -63,7 +57,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
         job.cancel()
     }
 
-    @OptIn(ExperimentalTime::class)
+
     @Test
     fun testReviewRequestedEventIsPublished() {
         val mockRequests = MockGithubRequest()
@@ -82,7 +76,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
         job.cancel()
     }
 
-    @OptIn(ExperimentalTime::class)
+
     @Test
     fun testNoNotificationForNonReviewReason() {
         val mockRequests = object : MockGithubRequest() {
@@ -108,7 +102,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
         connection.disconnect()
     }
 
-    @OptIn(ExperimentalTime::class)
+
     @Test
     fun testErrorNotificationIsShown() {
         val mockRequests = object : MockGithubRequest() {
@@ -135,14 +129,8 @@ class GithubNotificationTest : BasePlatformTestCase() {
         connection.disconnect()
     }
 
-    @OptIn(ExperimentalTime::class)
     @Test
     fun testCleanupMarksNotificationAsReadForClosedPR() {
-        val testTimeSource = TestTimeSource()
-        val testDispatcher = StandardTestDispatcher()
-        val testScope = TestScope(testDispatcher)
-        var testTime = TimeUnit.HOURS.toMillis(2)
-        val currentTimeProvider = { testTime }
         var markAsReadCalled = false
 
         val mockRequests = object : MockGithubRequest() {
@@ -165,20 +153,17 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         }
 
-        val githubNotification = GithubNotification(project, testScope)
+        val githubNotification = GithubNotification(project, scope)
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
 
-        val job = githubNotification.pollForNotifications(TimeSource.Monotonic)
-        //testTimeSource += 3600000.milliseconds
+        val job = githubNotification.pollForNotifications()
 
-        // Advance both the dispatcher time and our test time
-        testDispatcher.scheduler.advanceTimeBy(TimeUnit.HOURS.toMillis(2))
         Thread.sleep(2000)
         assertTrue("markNotificationThreadAsRead should have been called for closed PR", markAsReadCalled)
         job.cancel()
     }
 
-    @OptIn(ExperimentalTime::class)
+
     @Test
     fun testPollIntervalHeaderIsRespected() {
         // We'll check that the poll interval header changes the internal delay logic

@@ -64,12 +64,11 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     fun pollForNotifications(
-        timeSource: TimeSource = TimeSource.Monotonic
     ): Job {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var baseDelay = initialBaseDelay
         var retryCount = 0
-        var lastCleanupTime = timeSource.markNow()
+        var lastCleanupTime = TimeSource.Monotonic.markNow()
         val hourInMillis = 3600000L
 
         return scope.launch {
@@ -89,7 +88,9 @@ class GithubNotification(private val project: Project, private val scope: Corout
                                 val pullRequestNumber = urlPaths.last()
 
                                 val pullRequestResponse = getPullRequest(pullRequestNumber)
-                                if (pullRequestResponse.state !== PullRequestState.CLOSED) {
+                                if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                                    githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                                } else {
                                     val content =
                                         "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
                                     notifyPullRequest(content)
@@ -111,11 +112,10 @@ class GithubNotification(private val project: Project, private val scope: Corout
                             val entry = iterator.next()
                             val pullRequestResponse = getPullRequest(entry.value)
                             if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                                githubRequests.markNotificationThreadAsRead(entry.key)
                                 iterator.remove()
                             }
                         }
-                        lastCleanupTime = timeSource.markNow()
+                        lastCleanupTime = TimeSource.Monotonic.markNow()
                     }
                     retryCount = 0
                 } catch (e: Exception) {
