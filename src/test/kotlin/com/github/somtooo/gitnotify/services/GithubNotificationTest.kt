@@ -109,8 +109,18 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         }
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
-        val result = runCatching { githubNotification.pollOnce() }
-        assertTrue(result.isFailure && result.exceptionOrNull() is Exception)
+        var errorNotificationShown = false
+        val connection = project.messageBus.connect()
+        connection.subscribe(Notifications.TOPIC, object : Notifications {
+            override fun notify(notification: Notification) {
+                if (notification.groupId == "StickyBalloon") {
+                    errorNotificationShown = true
+                }
+            }
+        })
+        githubNotification.pollOnce()
+        assertTrue("Error notification should have been shown on exception", errorNotificationShown)
+        connection.disconnect()
     }
 
     @OptIn(ExperimentalTime::class)
