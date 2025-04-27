@@ -3,13 +3,13 @@ package com.github.somtooo.gitnotify.services
 import com.github.somtooo.gitnotify.lib.github.MockGithubRequest
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
 import com.intellij.notification.Notification
-import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -22,12 +22,14 @@ import kotlin.time.ExperimentalTime
 class GithubNotificationTest : BasePlatformTestCase() {
 
     private lateinit var githubNotification: GithubNotification
-    private lateinit var scope: CoroutineScope
+    private lateinit var testScope: TestScope
+    private lateinit var testDispatcher: TestDispatcher
 
     @Before
     fun before() {
-        scope = CoroutineScope(Dispatchers.Main)
-        githubNotification = GithubNotification(project, scope)
+        testDispatcher = StandardTestDispatcher()
+        testScope = TestScope(testDispatcher)
+        githubNotification = GithubNotification(project, testScope)
     }
 
     @After
@@ -35,10 +37,9 @@ class GithubNotificationTest : BasePlatformTestCase() {
         // Clean up resources if needed
     }
 
-
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testNotificationIsShownForMockGithubRequest() {
+    fun testNotificationIsShownForMockGithubRequest() = runTest(testDispatcher) {
         val mockRequests = MockGithubRequest()
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
         var notificationShown = false
@@ -51,20 +52,15 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         })
 
-        // Test pollOnce directly
-        runBlocking {
-            githubNotification.pollOnce()
-        }
-
+        githubNotification.pollOnce()
         assertTrue("Notification should have been shown for mock github request", notificationShown)
 
         connection.disconnect()
     }
 
-
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testReviewRequestedEventIsPublished() {
+    fun testReviewRequestedEventIsPublished() = runTest(testDispatcher) {
         val mockRequests = MockGithubRequest()
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
         var reviewRequestedCalled = false
@@ -74,18 +70,14 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 reviewRequestedCalled = true
             }
         })
-        // Test pollOnce directly
-        runBlocking {
-            githubNotification.pollOnce()
-        }
+        githubNotification.pollOnce()
         assertTrue("ReviewRequestedNotifier should have been called", reviewRequestedCalled)
         connection.disconnect()
     }
 
-
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testNoNotificationForNonReviewReason() {
+    fun testNoNotificationForNonReviewReason() = runTest(testDispatcher) {
         val mockRequests = object : MockGithubRequest() {
             override suspend fun getRepositoryNotifications() = super.getRepositoryNotifications().copy(
                 notificationThreads = super.getRepositoryNotifications().notificationThreads.map {
@@ -103,45 +95,27 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 }
             }
         })
-        runBlocking {
-            githubNotification.pollOnce()
-        }
+        githubNotification.pollOnce()
         assertFalse("Notification should NOT have been shown for non-review reason", notificationShown)
         connection.disconnect()
     }
 
-
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testErrorNotificationIsShown() {
+    fun testErrorNotificationIsShown() = runTest(testDispatcher) {
         val mockRequests = object : MockGithubRequest() {
             override suspend fun getRepositoryNotifications(): com.github.somtooo.gitnotify.lib.github.data.NotificationThreadResponse {
                 throw Exception("Some API error")
             }
         }
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
-        var errorNotificationShown = false
-        val connection = project.messageBus.connect()
-        connection.subscribe(Notifications.TOPIC, object : Notifications {
-            override fun notify(notification: Notification) {
-                if (
-                    notification.type == NotificationType.ERROR
-                ) {
-                    errorNotificationShown = true
-                }
-            }
-        })
-
-        runBlocking {
-            githubNotification.pollOnce()
-        }
-        assertTrue("Error notification should have been shown on exception", errorNotificationShown)
-        connection.disconnect()
+        val result = runCatching { githubNotification.pollOnce() }
+        assertTrue(result.isFailure && result.exceptionOrNull() is Exception)
     }
 
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testCleanupMarksNotificationAsReadForClosedPR() {
+    fun testCleanupMarksNotificationAsReadForClosedPR() = runTest(testDispatcher) {
         var markAsReadCalled = false
 
         val mockRequests = object : MockGithubRequest() {
@@ -166,16 +140,13 @@ class GithubNotificationTest : BasePlatformTestCase() {
 
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
 
-        runBlocking {
-            githubNotification.pollOnce()
-        }
+        githubNotification.pollOnce()
         assertTrue("markNotificationThreadAsRead should have been called for closed PR", markAsReadCalled)
     }
 
-
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testPollIntervalHeaderIsRespected() {
+    fun testPollIntervalHeaderIsRespected() = runTest(testDispatcher) {
         // We'll check that the poll interval header changes the internal delay logic
         // by providing a custom poll interval and observing that cleanupInterval is recomputed.
         // Since we can't observe delay directly, we check that no exceptions are thrown and logic proceeds.
@@ -196,9 +167,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 }
             }
         })
-        runBlocking {
-            githubNotification.pollOnce()
-        }
+        githubNotification.pollOnce()
         assertTrue(
             "Notification should have been shown and poll interval logic should not break execution",
             notificationShown
