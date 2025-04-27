@@ -33,6 +33,12 @@ class GithubNotificationTest : BasePlatformTestCase() {
         testScope = TestScope(testDispatcher)
         githubNotification = GithubNotification(project, testScope)
 
+        // Ensure GitHub token is set in environment
+        assertNotNull(
+            "GitHub token must be set in environment",
+            System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)
+        )
+
         val owner = System.getenv("GITHUB_OWNER") ?: "somtooo"
         val repo = System.getenv("GITHUB_REPO") ?: "DbGo"
         val githubUrlPathParameters = GithubUrlPathParameters(owner, repo)
@@ -253,5 +259,13 @@ class GithubNotificationTest : BasePlatformTestCase() {
         )
         assertFalse("Closed PR should be removed from the map", updatedMap.containsValue(closedPR))
         assertTrue("Open PR should remain in the map", updatedMap.containsValue(openPR))
+    }
+
+    @Test
+    fun testGetPullRequestNetworkCall() = runTest(testDispatcher) {
+        val service = GithubNotification(project, testScope)
+        val pr = service.getPullRequest("1")
+        assertNotNull(pr)
+        assertEquals(1, pr.number)
     }
 }

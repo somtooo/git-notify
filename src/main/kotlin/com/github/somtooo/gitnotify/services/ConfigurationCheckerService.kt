@@ -27,9 +27,9 @@ data class GithubUrlPathParameters(val owner: String, val repo: String) {
         const val REPO_KEY = "GITHUB_REPO"
 
         fun fromEnv(): GithubUrlPathParameters {
-            val owner = System.getenv(OWNER_KEY)
+            val owner = System.getProperty(OWNER_KEY)
                 ?: throw IllegalStateException("$OWNER_KEY environment variable not set")
-            val repo = System.getenv(REPO_KEY)
+            val repo = System.getProperty(REPO_KEY)
                 ?: throw IllegalStateException("$REPO_KEY environment variable not set")
             return GithubUrlPathParameters(owner, repo)
         }
