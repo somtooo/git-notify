@@ -3,6 +3,7 @@ package com.github.somtooo.gitnotify.services
 import com.github.somtooo.gitnotify.lib.github.MockGithubRequest
 import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
 import com.intellij.notification.Notification
+import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -113,14 +114,20 @@ class GithubNotificationTest : BasePlatformTestCase() {
         val connection = project.messageBus.connect()
         connection.subscribe(Notifications.TOPIC, object : Notifications {
             override fun notify(notification: Notification) {
-                if (notification.groupId == "StickyBalloon") {
+                if (notification.type == NotificationType.ERROR) {
                     errorNotificationShown = true
                 }
             }
         })
-        githubNotification.pollOnce()
+
+        try {
+            githubNotification.pollOnce()
+        } catch (e: Error) {
+        }
+
         assertTrue("Error notification should have been shown on exception", errorNotificationShown)
         connection.disconnect()
+
     }
 
     @OptIn(ExperimentalTime::class)

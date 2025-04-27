@@ -105,7 +105,7 @@ open class GithubRequests {
     }
 
     private fun HeadersBuilder.addGithubHeaders() {
-        append("Authorization", "Bearer ${System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)}")
+        append("Authorization", "Bearer ${System.getProperty(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)}")
         append("Accept", "application/vnd.github+json")
         append("X-GitHub-Api-Version", "2022-11-28")
     }

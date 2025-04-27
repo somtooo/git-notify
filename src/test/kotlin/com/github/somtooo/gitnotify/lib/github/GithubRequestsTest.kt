@@ -25,10 +25,14 @@ class GithubRequestsTest : BasePlatformTestCase() {
 
         // Set up GitHub URL path parameters
         // Use a well-known public repository that definitely exists
-        val owner = System.getenv("GITHUB_OWNER") ?: "octocat"
-        val repo = System.getenv("GITHUB_REPO") ?: "Hello-World"
+        val owner = System.getenv("GITHUB_OWNER") ?: "somtooo"
+        val repo = System.getenv("GITHUB_REPO") ?: "DbGo"
         val githubUrlPathParameters = GithubUrlPathParameters(owner, repo)
         githubUrlPathParameters.setToEnv()
+        System.setProperty(
+            ConfigurationCheckerService.GIT_HUB_TOKEN_KEY,
+            System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)!!
+        )
 
         githubRequests = GithubRequests()
 

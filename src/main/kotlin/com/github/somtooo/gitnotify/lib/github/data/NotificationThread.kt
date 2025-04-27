@@ -118,8 +118,8 @@ data class Repository(
 
 @Serializable
 data class SimpleUser(
-    val name: String,
-    val email: String,
+    val name: String? = null,
+    val email: String? = null,
     val login: String,
     val id: Long,
     @SerialName("node_id")

@@ -23,13 +23,13 @@ import java.io.FileNotFoundException
 
 data class GithubUrlPathParameters(val owner: String, val repo: String) {
     companion object {
-        private const val OWNER_KEY = "GITHUB_OWNER"
-        private const val REPO_KEY = "GITHUB_REPO"
+        const val OWNER_KEY = "GITHUB_OWNER"
+        const val REPO_KEY = "GITHUB_REPO"
 
         fun fromEnv(): GithubUrlPathParameters {
-            val owner = System.getProperty(OWNER_KEY)
+            val owner = System.getenv(OWNER_KEY)
                 ?: throw IllegalStateException("$OWNER_KEY environment variable not set")
-            val repo = System.getProperty(REPO_KEY)
+            val repo = System.getenv(REPO_KEY)
                 ?: throw IllegalStateException("$REPO_KEY environment variable not set")
             return GithubUrlPathParameters(owner, repo)
         }
