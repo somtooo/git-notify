@@ -9,11 +9,13 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(JUnit4::class)
@@ -34,6 +36,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
     }
 
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testNotificationIsShownForMockGithubRequest() {
         val mockRequests = MockGithubRequest()
@@ -48,16 +51,18 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         })
 
-        val job = githubNotification.pollForNotifications()
-        Thread.sleep(1000)
+        // Test pollOnce directly
+        runBlocking {
+            githubNotification.pollOnce()
+        }
 
         assertTrue("Notification should have been shown for mock github request", notificationShown)
 
         connection.disconnect()
-        job.cancel()
     }
 
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testReviewRequestedEventIsPublished() {
         val mockRequests = MockGithubRequest()
@@ -69,14 +74,16 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 reviewRequestedCalled = true
             }
         })
-        val job = githubNotification.pollForNotifications()
-        Thread.sleep(1000)
+        // Test pollOnce directly
+        runBlocking {
+            githubNotification.pollOnce()
+        }
         assertTrue("ReviewRequestedNotifier should have been called", reviewRequestedCalled)
         connection.disconnect()
-        job.cancel()
     }
 
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testNoNotificationForNonReviewReason() {
         val mockRequests = object : MockGithubRequest() {
@@ -96,13 +103,15 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 }
             }
         })
-        githubNotification.pollForNotifications()
-        Thread.sleep(1000)
+        runBlocking {
+            githubNotification.pollOnce()
+        }
         assertFalse("Notification should NOT have been shown for non-review reason", notificationShown)
         connection.disconnect()
     }
 
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testErrorNotificationIsShown() {
         val mockRequests = object : MockGithubRequest() {
@@ -123,12 +132,14 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         })
 
-        githubNotification.pollForNotifications()
-        Thread.sleep(1000)
+        runBlocking {
+            githubNotification.pollOnce()
+        }
         assertTrue("Error notification should have been shown on exception", errorNotificationShown)
         connection.disconnect()
     }
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testCleanupMarksNotificationAsReadForClosedPR() {
         var markAsReadCalled = false
@@ -153,17 +164,16 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         }
 
-        val githubNotification = GithubNotification(project, testScope)
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
 
-        val job = githubNotification.pollForNotifications()
-
-        Thread.sleep(2000)
+        runBlocking {
+            githubNotification.pollOnce()
+        }
         assertTrue("markNotificationThreadAsRead should have been called for closed PR", markAsReadCalled)
-        job.cancel()
     }
 
 
+    @OptIn(ExperimentalTime::class)
     @Test
     fun testPollIntervalHeaderIsRespected() {
         // We'll check that the poll interval header changes the internal delay logic
@@ -186,8 +196,9 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 }
             }
         })
-        githubNotification.pollForNotifications()
-        Thread.sleep(1200)
+        runBlocking {
+            githubNotification.pollOnce()
+        }
         assertTrue(
             "Notification should have been shown and poll interval logic should not break execution",
             notificationShown

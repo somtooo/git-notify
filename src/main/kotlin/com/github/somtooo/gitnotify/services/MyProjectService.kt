@@ -16,6 +16,7 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.util.*
 import kotlinx.coroutines.*
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 data class ReviewRequestedContext(
@@ -70,69 +71,87 @@ class GithubNotification(private val project: Project, private val scope: Corout
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var baseDelay = initialBaseDelay
         var retryCount = 0
-        var lastCleanupTime = TimeSource.Monotonic.markNow()
+        var lastCleanupTime: TimeMark = TimeSource.Monotonic.markNow()
         val hourInMillis = 3600000L
 
         return scope.launch(dispatcher) {
             while (isActive) {
-                try {
-                    val notificationThreadResponses = githubRequests.getRepositoryNotifications()
-                    notificationThreadResponses.headers["x-poll-interval"]?.let {
-                        val pollInterval = it.toLong()
-                        baseDelay = pollInterval * baseDelay / defaultXPollHeader
-                    }
-
-                    for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
-                        if (notificationThreadResponse.reason == reasonKey) {
-                            if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
-                                val pullRequestUrl = notificationThreadResponse.subject.url
-                                val urlPaths = pullRequestUrl.split(Regex("//|/"))
-                                val pullRequestNumber = urlPaths.last()
-
-                                val pullRequestResponse = getPullRequest(pullRequestNumber)
-                                if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                                    githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
-                                } else {
-                                    val content =
-                                        "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
-                                    notifyPullRequest(content)
-
-                                    val publisher =
-                                        project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
-                                    publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
-                                    notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
-                                        pullRequestNumber
-                                }
-                            }
-                        }
-                    }
-
-                    val currentMark = lastCleanupTime.elapsedNow().inWholeMilliseconds
-                    if (currentMark > hourInMillis) {
-                        val iterator = notificationThreadIdToPullRequestNumber.iterator()
-                        while (iterator.hasNext()) {
-                            val entry = iterator.next()
-                            val pullRequestResponse = getPullRequest(entry.value)
-                            if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                                iterator.remove()
-                            }
-                        }
-                        lastCleanupTime = TimeSource.Monotonic.markNow()
-                    }
-                    retryCount = 0
-                } catch (e: Exception) {
-                    retryCount = retryCount + 1
-                    val result = handleRateLimitException(e, retryCount)
-                    if (result.second) {
-                        return@launch
-                    }
-                    baseDelay = result.first
-                }
+                baseDelay = pollOnce(notificationThreadIdToPullRequestNumber, baseDelay, hourInMillis, lastCleanupTime)?.also {
+                    lastCleanupTime = it.second
+                }?.first ?: baseDelay
                 delay(baseDelay)
             }
         }
     }
 
+    /**
+     * Extracted from pollForNotifications while loop for easier testing.
+     * Returns Pair<baseDelay, lastCleanupTime> if successful, null if terminated.
+     */
+    internal suspend fun pollOnce(
+        notificationThreadIdToPullRequestNumber: MutableMap<String, String> = mutableMapOf(),
+        baseDelayIn: Long = initialBaseDelay,
+        hourInMillis: Long = 3600000L,
+        lastCleanupTimeIn: TimeMark = TimeSource.Monotonic.markNow()
+    ): Pair<Long, TimeMark>? {
+        var baseDelay = baseDelayIn
+        var lastCleanupTime: TimeMark = lastCleanupTimeIn
+        var retryCount = 0
+        try {
+            val notificationThreadResponses = githubRequests.getRepositoryNotifications()
+            notificationThreadResponses.headers["x-poll-interval"]?.let {
+                val pollInterval = it.toLong()
+                baseDelay = pollInterval * baseDelay / defaultXPollHeader
+            }
+
+            for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
+                if (notificationThreadResponse.reason == reasonKey) {
+                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
+                        val pullRequestUrl = notificationThreadResponse.subject.url
+                        val urlPaths = pullRequestUrl.split(Regex("//|/"))
+                        val pullRequestNumber = urlPaths.last()
+
+                        val pullRequestResponse = getPullRequest(pullRequestNumber)
+                        if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                            githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                        } else {
+                            val content =
+                                "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
+                            notifyPullRequest(content)
+
+                            val publisher =
+                                project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
+                            publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
+                            notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
+                                pullRequestNumber
+                        }
+                    }
+                }
+            }
+
+            val currentMark = lastCleanupTime.elapsedNow().inWholeMilliseconds
+            if (currentMark > hourInMillis) {
+                val iterator = notificationThreadIdToPullRequestNumber.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    val pullRequestResponse = getPullRequest(entry.value)
+                    if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                        iterator.remove()
+                    }
+                }
+                lastCleanupTime = TimeSource.Monotonic.markNow()
+            }
+            retryCount = 0
+        } catch (e: Exception) {
+            retryCount = retryCount + 1
+            val result = handleRateLimitException(e, retryCount)
+            if (result.second) {
+                return null
+            }
+            baseDelay = result.first
+        }
+        return Pair(baseDelay, lastCleanupTime)
+    }
 
     private fun handleRateLimitException(e: Exception, retryCount: Int): Pair<Long, Boolean> {
         when (e) {
