@@ -15,16 +15,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
-
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(JUnit4::class)
 class GithubNotificationTest : BasePlatformTestCase() {
+
     private lateinit var githubNotification: GithubNotification
     private lateinit var scope: CoroutineScope
 
     @Before
     fun before() {
-        scope = CoroutineScope(Dispatchers.Default)
+        scope = CoroutineScope(Dispatchers.Main)
         githubNotification = GithubNotification(project, scope)
     }
 
@@ -153,7 +153,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
             }
         }
 
-        val githubNotification = GithubNotification(project, scope)
+        val githubNotification = GithubNotification(project, testScope)
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
 
         val job = githubNotification.pollForNotifications()

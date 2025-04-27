@@ -64,6 +64,8 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     fun pollForNotifications(
+        dispatcher: CoroutineDispatcher = Dispatchers.Default
+
     ): Job {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var baseDelay = initialBaseDelay
@@ -71,7 +73,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         var lastCleanupTime = TimeSource.Monotonic.markNow()
         val hourInMillis = 3600000L
 
-        return scope.launch {
+        return scope.launch(dispatcher) {
             while (isActive) {
                 try {
                     val notificationThreadResponses = githubRequests.getRepositoryNotifications()
