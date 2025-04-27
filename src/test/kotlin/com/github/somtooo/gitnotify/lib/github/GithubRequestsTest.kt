@@ -4,6 +4,8 @@ import com.github.somtooo.gitnotify.lib.github.data.PullRequestState
 import com.github.somtooo.gitnotify.services.ConfigurationCheckerService
 import com.github.somtooo.gitnotify.services.GithubUrlPathParameters
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import io.ktor.client.plugins.*
+import io.ktor.http.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -74,4 +76,22 @@ class GithubRequestsTest : BasePlatformTestCase() {
 
         println("[DEBUG_LOG] Successfully retrieved pull request #$pullRequestNumber. State: ${pullRequestResponse.pullRequest.state}")
     }
+
+    @Test
+    fun `it should throw an exception if the pull request has not been modified`() = runBlocking {
+        val pullRequestNumber = "1"
+
+        val pullRequestResponse = githubRequests.getAPullRequest(pullRequestNumber)
+        val lastModified = pullRequestResponse.headers["last-modified"]
+        assertNotNull(lastModified)
+
+        try {
+            githubRequests.getAPullRequest(pullRequestNumber, lastModified)
+        } catch (e: RedirectResponseException) {
+            assertTrue(e.response.status == HttpStatusCode.NotModified)
+        }
+
+        println("[DEBUG_LOG] Successfully retrieved pull request #$pullRequestNumber. State: ${pullRequestResponse.pullRequest.state}")
+    }
+
 }

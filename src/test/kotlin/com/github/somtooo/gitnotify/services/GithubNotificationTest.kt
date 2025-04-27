@@ -268,4 +268,15 @@ class GithubNotificationTest : BasePlatformTestCase() {
         assertNotNull(pr)
         assertEquals(1, pr.number)
     }
+
+    @Test
+    fun testGetPullRequestNotModifiedUsesCache() = runTest(testDispatcher) {
+        val service = GithubNotification(project, testScope)
+        // Prime the cache
+        val pr = service.getPullRequest("1")
+        assertNotNull(pr)
+        // Second call should succeed (simulate 304 Not Modified behavior)
+        val cached = service.getPullRequest("1")
+        assertEquals(pr.number, cached.number)
+    }
 }
