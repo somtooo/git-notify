@@ -189,7 +189,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     // test this method actually works
-    suspend fun getPullRequest(
+    public suspend fun getPullRequest(
         pullNumber: String,
     ): PullRequest {
 
