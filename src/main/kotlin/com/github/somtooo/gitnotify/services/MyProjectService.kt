@@ -68,35 +68,29 @@ class GithubNotification(private val project: Project, private val scope: Corout
         dispatcher: CoroutineDispatcher = Dispatchers.Default
 
     ): Job {
-        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
-        var baseDelay = initialBaseDelay
-        var retryCount = 0
-        var lastCleanupTime: TimeMark = TimeSource.Monotonic.markNow()
-        val hourInMillis = 3600000L
-
         return scope.launch(dispatcher) {
             while (isActive) {
-                baseDelay = pollOnce(notificationThreadIdToPullRequestNumber, baseDelay, hourInMillis, lastCleanupTime)?.also {
-                    lastCleanupTime = it.second
-                }?.first ?: baseDelay
-                delay(baseDelay)
+                try {
+                    val baseDelay = pollOnce()
+                    delay(baseDelay)
+                } catch (e: Exception) {
+                    logger.error("Unexpected error in notification polling", e)
+                    return@launch
+                }
             }
         }
     }
 
     /**
      * Extracted from pollForNotifications while loop for easier testing.
-     * Returns Pair<baseDelay, lastCleanupTime> if successful, null if terminated.
+     * Returns baseDelay if successful, 0 if terminated.
      */
-    internal suspend fun pollOnce(
-        notificationThreadIdToPullRequestNumber: MutableMap<String, String> = mutableMapOf(),
-        baseDelayIn: Long = initialBaseDelay,
-        hourInMillis: Long = 3600000L,
-        lastCleanupTimeIn: TimeMark = TimeSource.Monotonic.markNow()
-    ): Pair<Long, TimeMark>? {
-        var baseDelay = baseDelayIn
-        var lastCleanupTime: TimeMark = lastCleanupTimeIn
+    internal suspend fun pollOnce(): Long {
+        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
+        var baseDelay = initialBaseDelay
         var retryCount = 0
+        var lastCleanupTime: TimeMark = TimeSource.Monotonic.markNow()
+        val hourInMillis = 3600000L
         try {
             val notificationThreadResponses = githubRequests.getRepositoryNotifications()
             notificationThreadResponses.headers["x-poll-interval"]?.let {
@@ -144,34 +138,30 @@ class GithubNotification(private val project: Project, private val scope: Corout
             retryCount = 0
         } catch (e: Exception) {
             retryCount = retryCount + 1
-            val result = handleRateLimitException(e, retryCount)
-            if (result.second) {
-                return null
-            }
-            baseDelay = result.first
+            baseDelay = handleRateLimitException(e, retryCount)
         }
-        return Pair(baseDelay, lastCleanupTime)
+        return baseDelay
     }
 
-    private fun handleRateLimitException(e: Exception, retryCount: Int): Pair<Long, Boolean> {
+    private fun handleRateLimitException(e: Exception, retryCount: Int): Long {
         when (e) {
             is ClientRequestException -> {
                 val isRateLimitIssue = e.message.contains("rate limit", ignoreCase = true) &&
                         e.response.status in listOf(HttpStatusCode.TooManyRequests, HttpStatusCode.Forbidden)
 
                 if (isRateLimitIssue) {
-                    return Pair(handleRateLimiting(e.response, retryCount), false)
+                    return handleRateLimiting(e.response, retryCount)
                 }
 
                 logger.error("Client error in main loop: ${e.message}")
                 notifyError("Client error: ${e.message}")
-                return Pair(0, true)
+                throw e
             }
 
             else -> {
-                logger.debug("Unexpected error in notification polling", e)
+                logger.error("Unexpected error in notification polling", e)
                 notifyError("Unexpected error: ${e.message}")
-                return Pair(0, true)
+                throw e
             }
         }
     }
