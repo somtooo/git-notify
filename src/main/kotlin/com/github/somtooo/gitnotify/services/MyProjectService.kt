@@ -153,7 +153,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     return handleRateLimiting(e.response, retryCount)
                 }
 
-                logger.error("Client error in main loop: ${e.message}")
+                logger.debug("Client error in main loop: ${e.message}")
                 notifyError("Client error: ${e.message}")
                 throw e
             }
