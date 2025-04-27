@@ -140,8 +140,8 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     }
                 }
             }
-            val currentMark: Long = lastCleanupTime.elapsedNow().inWholeMilliseconds
-            if (currentMark > hourInMillis) {
+            val elapsedTime: Long = lastCleanupTime.elapsedNow().inWholeMilliseconds
+            if (elapsedTime > hourInMillis) {
                 val iterator = notificationThreadIdToPullRequestNumber.iterator()
                 while (iterator.hasNext()) {
                     val entry = iterator.next()
@@ -188,7 +188,8 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
-    private suspend fun getPullRequest(
+    // test this method actually works
+    suspend fun getPullRequest(
         pullNumber: String,
     ): PullRequest {
 

@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -31,6 +32,18 @@ class GithubNotificationTest : BasePlatformTestCase() {
         testDispatcher = StandardTestDispatcher()
         testScope = TestScope(testDispatcher)
         githubNotification = GithubNotification(project, testScope)
+
+        val owner = System.getenv("GITHUB_OWNER") ?: "somtooo"
+        val repo = System.getenv("GITHUB_REPO") ?: "DbGo"
+        val githubUrlPathParameters = GithubUrlPathParameters(owner, repo)
+        githubUrlPathParameters.setToEnv()
+        System.setProperty(
+            ConfigurationCheckerService.GIT_HUB_TOKEN_KEY,
+            System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)!!
+        )
+
+
+        println("[DEBUG_LOG] Using GitHub repository: $owner/$repo")
     }
 
     @After
@@ -190,5 +203,55 @@ class GithubNotificationTest : BasePlatformTestCase() {
             notificationShown
         )
         connection.disconnect()
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testMapCleanupRemovesClosedPRsAfterHour() = runTest(testDispatcher) {
+        val hourInMillis = 3600000L
+        val closedPR = "1"
+        val openPR = "2"
+        val notificationMap = mutableMapOf(
+            "thread1" to closedPR,
+            "thread2" to openPR
+        )
+        // Simulate lastCleanupTime so that elapsedNow() > hourInMillis
+        val fakeTimeMark = object : kotlin.time.TimeMark {
+            override fun elapsedNow() = (hourInMillis + 1).milliseconds
+            override fun hasPassedNow() = true
+            override fun plus(duration: kotlin.time.Duration) = this
+            override fun minus(duration: kotlin.time.Duration) = this
+        }
+        val mockRequests = object : MockGithubRequest() {
+            override suspend fun getAPullRequest(
+                pullNumber: String,
+                lastModified: String?
+            ): com.github.somtooo.gitnotify.lib.github.data.PullRequestsResponse {
+                return if (pullNumber == closedPR) {
+                    super.getAPullRequest(pullNumber, lastModified).copy(
+                        pullRequest = super.getAPullRequest(
+                            pullNumber,
+                            lastModified
+                        ).pullRequest.copy(state = PullRequestState.CLOSED)
+                    )
+                } else {
+                    super.getAPullRequest(pullNumber, lastModified).copy(
+                        pullRequest = super.getAPullRequest(
+                            pullNumber,
+                            lastModified
+                        ).pullRequest.copy(state = PullRequestState.OPEN)
+                    )
+                }
+            }
+        }
+        githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
+        val (_, updatedMap, _, _) = githubNotification.pollOnce(
+            notificationThreadIdToPullRequestNumber = notificationMap,
+            retryCountIn = 0,
+            lastCleanupTimeIn = fakeTimeMark,
+            hourInMillis = hourInMillis
+        )
+        assertFalse("Closed PR should be removed from the map", updatedMap.containsValue(closedPR))
+        assertTrue("Open PR should remain in the map", updatedMap.containsValue(openPR))
     }
 }
