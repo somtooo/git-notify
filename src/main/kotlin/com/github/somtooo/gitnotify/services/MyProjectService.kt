@@ -68,10 +68,24 @@ class GithubNotification(private val project: Project, private val scope: Corout
         dispatcher: CoroutineDispatcher = Dispatchers.Default
 
     ): Job {
+        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
+        var retryCount = 0
+        var lastCleanupTime = TimeSource.Monotonic.markNow()
+        val hourInMillis = 3600000L
         return scope.launch(dispatcher) {
             while (isActive) {
                 try {
-                    val baseDelay = pollOnce()
+                    val (baseDelay, updatedMap, updatedRetry, updatedCleanup) = pollOnce(
+                        notificationThreadIdToPullRequestNumber,
+                        retryCount,
+                        lastCleanupTime,
+                        hourInMillis
+                    )
+                    // update state for next iteration
+                    notificationThreadIdToPullRequestNumber.clear()
+                    notificationThreadIdToPullRequestNumber.putAll(updatedMap)
+                    retryCount = updatedRetry
+                    lastCleanupTime = updatedCleanup
                     delay(baseDelay)
                 } catch (e: Exception) {
                     logger.error("Unexpected error in notification polling", e)
@@ -82,29 +96,30 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     /**
-     * Extracted from pollForNotifications while loop for easier testing.
-     * Returns baseDelay if successful, 0 if terminated.
+     * pollOnce now takes state as parameters (with defaults for tests).
+     * Returns baseDelay, updated map, retry count, and cleanup time.
      */
-    internal suspend fun pollOnce(): Long {
-        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
+    internal suspend fun pollOnce(
+        notificationThreadIdToPullRequestNumber: MutableMap<String, String> = mutableMapOf(),
+        retryCountIn: Int = 0,
+        lastCleanupTimeIn: TimeMark = TimeSource.Monotonic.markNow(),
+        hourInMillis: Long = 3600000L
+    ): Quad<Long, MutableMap<String, String>, Int, TimeMark> {
         var baseDelay = initialBaseDelay
-        var retryCount = 0
-        var lastCleanupTime: TimeMark = TimeSource.Monotonic.markNow()
-        val hourInMillis = 3600000L
+        var retryCount = retryCountIn
+        var lastCleanupTime = lastCleanupTimeIn
         try {
             val notificationThreadResponses = githubRequests.getRepositoryNotifications()
             notificationThreadResponses.headers["x-poll-interval"]?.let {
                 val pollInterval = it.toLong()
                 baseDelay = pollInterval * baseDelay / defaultXPollHeader
             }
-
             for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
                 if (notificationThreadResponse.reason == reasonKey) {
                     if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
                         val pullRequestUrl = notificationThreadResponse.subject.url
                         val urlPaths = pullRequestUrl.split(Regex("//|/"))
                         val pullRequestNumber = urlPaths.last()
-
                         val pullRequestResponse = getPullRequest(pullRequestNumber)
                         if (pullRequestResponse.state == PullRequestState.CLOSED) {
                             githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
@@ -112,7 +127,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
                             val content =
                                 "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
                             notifyPullRequest(content)
-
                             val publisher =
                                 project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
                             publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
@@ -122,7 +136,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     }
                 }
             }
-
             val currentMark = lastCleanupTime.elapsedNow().inWholeMilliseconds
             if (currentMark > hourInMillis) {
                 val iterator = notificationThreadIdToPullRequestNumber.iterator()
@@ -138,9 +151,14 @@ class GithubNotification(private val project: Project, private val scope: Corout
             retryCount = 0
         } catch (e: Exception) {
             retryCount = retryCount + 1
-            baseDelay = handleRateLimitException(e, retryCount)
+            try {
+                baseDelay = handleRateLimitException(e, retryCount)
+            } catch (ex: Exception) {
+                // propagate to outer loop
+                throw ex
+            }
         }
-        return baseDelay
+        return Quad(baseDelay, notificationThreadIdToPullRequestNumber, retryCount, lastCleanupTime)
     }
 
     private fun handleRateLimitException(e: Exception, retryCount: Int): Long {
@@ -153,7 +171,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     return handleRateLimiting(e.response, retryCount)
                 }
 
-                logger.error("Client error in main loop: ${e.message}")
+                logger.debug("Client error in main loop: ${e.message}")
                 notifyError("Client error: ${e.message}")
                 throw e
             }
@@ -247,147 +265,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
             NotificationType.ERROR
         ).notify(project)
     }
-}
 
-// Identify the project github repo link then start the service, service should be active as long as project is active and if project becomes inactive
-// save the state until project becomes active again. If project has no vcs setup dont send notifications. Github token will be an env variable. Confirm if it can be dumb aware
-//On notification approval mark that notification thread as read. confirm looking at pr in intellij marks it as read, should be able to disable notifications for a project by clicking do not show again
-//Since this is a project level service what happens if you have reviewd a pr what kind of further activity will mark the notification thread as unread? and for v1 how to identify these kinds of notif so you dont show the user again
-// also what kind of activity will mark a notification thread from requested review to something else so that notifications that are meant to be shown to the user isnt dropped.
-// handle cases for project switching, laptop sleeping, ide closing and deleting data for pr's that have been closed.
-// respect polling seconds in the header and take pagination into account
-//handle failures e.g bad token
-// laptop on sleep all weekend plus vacation. events can exceed 300 leaving bad data.
-//@Service(Service.Level.PROJECT)
-//class MyProjectService(private val project: Project, private val scope: CoroutineScope) {
-//    private val url = "aHR0cHM6Ly9lb2VtdGw4NW15dTVtcjAubS5waXBlZHJlYW0ubmV0"
-//    private val client = HttpClient()
-//    val rcFilePath: String = "${System.getProperty("user.home")}/.gitnotifyrc"
-//
-//    init {
-//        thisLogger().info(MyBundle.message("projectService", project.name))
-//        thisLogger().warn("Don't forget to remove all non-needed sample code files with their corresponding registration entries in `plugin.xml`.")
-//    }
-//
-////    fun doChange(project: Project) {
-////        val myContext = ReviewRequestedContext(
-////            actionName = "MySpecificKotlinAction",
-////            additionalInfo = mapOf("key" to "value", "count" to 10)
-////        )
-////        val publisher = project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
-////        publisher.beforeAction(myContext) // Sending 'myContext' as data
-////        try {
-////            // do action
-////        } finally {
-////            publisher.afterAction(myContext) // Sending the same or a modified 'myContext'
-////        }
-////    }
-////
-////    fun runActivity(project: Project) {
-////        val connection = project.messageBus.connect()
-////        connection.subscribe(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC, object : ReviewRequestedNotifier {
-////            override fun beforeAction(context: ReviewRequestedContext) {
-////                println(
-////                    "Before action: ${context.actionName}, " +
-////                            "Started at: ${Date(context.startTime)}, " +
-////                            "Info: ${context.additionalInfo}"
-////                )
-////                // Access the data from the 'context' object
-////            }
-////
-////            override fun afterAction(context: ReviewRequestedContext) {
-////                println("After action: ${context.actionName}")
-////                // Access the data from the 'context' object
-////            }
-////        })
-////    }
-//
-//    fun checkEnv(): String {
-//        val token: String = parseRcFile(rcFilePath)
-//        return token
-//    }
-//
-//    //    fun getSettings(project: Project) {
-////        val notifier = VcsNotifier.getInstance(project)
-////        val defaultAccountHolder = project.service<GithubProjectDefaultAccountHolder>()
-////        println(defaultAccountHolder.state.defaultAccountId);
-////    }
-//    fun buildUrl(project: Project): String {
-//        println("Starting build url::::::::::::::::::::::::::::::::::::")
-//        val repositoryManager: GitRepositoryManager = GitRepositoryManager.getInstance(project)
-//        val repositories: Collection<GitRepository> = repositoryManager.repositories
-//
-//        println("The list of repositories is: $repositories")
-//        if (repositories.isEmpty()) {
-//            return "" // No Git repositories found in the project.
-//        }
-//
-//        // Iterate through repositories and get the first remote URL.
-//        for (repository in repositories) {
-//            if (repository.remotes.isNotEmpty()) {
-//                // Return the URL of the first remote. You might need to handle multiple remotes
-//                // or different remote names (e.g., "origin", "upstream") according to your needs.
-//                println("The remote is: ${repository.remotes}")
-//            }
-//        }
-//        return "" // No remotes found in any repository.
-//    }
-//
-//    fun checkIfPullRequestReviewRequested() {
-//        var k: Job = scope.launch(Dispatchers.Default) {
-//            launch {
-//                async {
-//                }
-//            }
-//            try {
-//                println("todo")
-//            } catch (e: Throwable) {
-//                logger<MyProjectService>().warn("Http req failed")
-//            }
-//        }
-//
-//        k.isActive
-//    }
-//
-//    private fun parseRcFile(filePath: String): String {
-//        val result = mutableMapOf<String, String>()
-//        val file = File(filePath)
-//
-//        if (!file.exists()) {
-//            logger<MyProjectService>().error(".gitnotifyrc file does not exist")
-//            return ""// Return empty map if file doesn't exist
-//        }
-//
-//        file.forEachLine { line ->
-//            val trimmedLine = line.trim()
-//            if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) { // Ignore comments and empty lines
-//                val parts = trimmedLine.split("=", limit = 2) // Limit to 2 parts to handle values with '='
-//                if (parts.size == 2) {
-//                    val key = parts[0].trim()
-//                    val value = parts[1].trim()
-//                    result[key] = value
-//                }
-//            }
-//        }
-//
-//        return result["GITHUB_TOKEN"] ?: ""
-//    }
-//
-////    fun getRandomNumberNotify(project: Project): Int {
-////        println("Starting build url::::::::::::::::::::::::::::::::::::");
-////        thisLogger().info("Starting build url::::::::::::::::::::::::::::::::::::")
-////        val notify: Notification = NotificationGroupManager.getInstance().getNotificationGroup("GithubPullRequest")
-////            .createNotification("Random Number is 2", NotificationType.INFORMATION)
-////        notify.addAction(NotificationAction.createSimpleExpiring("Don't Show Again") {
-////            notify.expire()
-////        })
-////        val number: Int = (1..2).random()
-////        if (number == 2) {
-////            notify.notify(project)
-////        }
-////
-////        return number;
-////    }
-//
-//    fun getRandomNumber() = (1..2).random()
-//}
+    // Helper data class for returning 4 values
+    data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+}
