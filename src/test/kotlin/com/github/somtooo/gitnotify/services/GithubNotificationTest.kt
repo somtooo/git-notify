@@ -38,6 +38,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
             System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)
         )
 
+
         val owner = System.getenv("GITHUB_OWNER") ?: "somtooo"
         val repo = System.getenv("GITHUB_REPO") ?: "DbGo"
         val githubUrlPathParameters = GithubUrlPathParameters(owner, repo)
@@ -46,7 +47,6 @@ class GithubNotificationTest : BasePlatformTestCase() {
             ConfigurationCheckerService.GIT_HUB_TOKEN_KEY,
             System.getenv(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)!!
         )
-
 
         println("[DEBUG_LOG] Using GitHub repository: $owner/$repo")
     }
@@ -187,21 +187,9 @@ class GithubNotificationTest : BasePlatformTestCase() {
     @OptIn(ExperimentalTime::class)
     @Test
     fun testNoNotificationForClosedPR() = runTest(testDispatcher) {
-        val closedPR = "2"
-        val threadId = "thread2"
-        val notificationMap = mutableMapOf<String, String>()
         var notificationShown = false
+        val defaultRequest = MockGithubRequest()
         val mockRequests = object : MockGithubRequest() {
-            override suspend fun getRepositoryNotifications() = super.getRepositoryNotifications().copy(
-                notificationThreads = listOf(
-                    super.getRepositoryNotifications().notificationThreads.first().copy(
-                        id = threadId,
-                        subject = super.getRepositoryNotifications().notificationThreads.first().subject.copy(url = "https://api.github.com/repos/owner/repo/pulls/$closedPR"),
-                        reason = "review_requested"
-                    )
-                )
-            )
-
             override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =
                 super.getAPullRequest(pullNumber, lastModified).copy(
                     pullRequest = super.getAPullRequest(
@@ -210,6 +198,9 @@ class GithubNotificationTest : BasePlatformTestCase() {
                     ).pullRequest.copy(state = PullRequestState.CLOSED)
                 )
         }
+        githubNotification.setGithubRequestsForTest(githubNotification, defaultRequest)
+        val (_, map, _) = githubNotification.pollOnce()
+
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
         val connection = project.messageBus.connect()
         connection.subscribe(Notifications.TOPIC, object : Notifications {
@@ -219,7 +210,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 }
             }
         })
-        githubNotification.pollOnce(notificationMap)
+        githubNotification.pollOnce(notificationThreadIdToPullRequestNumber = map)
         assertFalse("No notification should be shown for closed PR", notificationShown)
         connection.disconnect()
     }

@@ -109,17 +109,12 @@ class GithubNotification(private val project: Project, private val scope: Corout
                 baseDelay = pollInterval * baseDelay / defaultXPollHeader
             }
             for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
-                val pullRequestUrl = notificationThreadResponse.subject.url
-                val urlPaths = pullRequestUrl.split(Regex("//|/"))
-                val pullRequestNumber = urlPaths.last()
-                val pullRequestResponse = getPullRequest(pullRequestNumber)
-                if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                    // If the PR is closed, mark as read and remove from the map if present
-                    githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
-                    notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
-                } else if (notificationThreadResponse.reason == reasonKey) {
-                    // Only notify if not already tracked
-                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
+                if (notificationThreadResponse.subject.type == "PullRequest") {
+                    val pullRequestUrl = notificationThreadResponse.subject.url
+                    val urlPaths = pullRequestUrl.split(Regex("//|/"))
+                    val pullRequestNumber = urlPaths.last()
+                    val pullRequestResponse = getPullRequest(pullRequestNumber)
+                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null && notificationThreadResponse.reason == reasonKey) {
                         val content =
                             "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
                         notifyPullRequest(content)
@@ -128,6 +123,12 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
                         notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
                             pullRequestNumber
+                    } else if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null) {
+                        if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                            // If the PR is closed, mark as read and remove from the map if present
+                            githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                            notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
+                        }
                     }
                 }
             }

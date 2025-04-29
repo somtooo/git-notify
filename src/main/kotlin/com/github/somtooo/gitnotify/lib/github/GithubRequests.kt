@@ -79,7 +79,6 @@ open class GithubRequests {
     open suspend fun getAPullRequest(pullNumber: String, lastModified: String? = null): PullRequestsResponse {
         val githubUrlPathParameters = GithubUrlPathParameters.fromEnv()
         println("githubUrlPathParameters: $githubUrlPathParameters")
-        println("Token: ${System.getProperty(ConfigurationCheckerService.GIT_HUB_TOKEN_KEY)}")
         val url =
             "https://api.github.com/repos/${githubUrlPathParameters.owner}/${githubUrlPathParameters.repo}/pulls/$pullNumber"
 
