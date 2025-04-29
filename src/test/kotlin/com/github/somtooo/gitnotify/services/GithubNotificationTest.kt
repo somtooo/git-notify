@@ -155,12 +155,6 @@ class GithubNotificationTest : BasePlatformTestCase() {
         var markAsReadCalled = false
 
         val mockRequests = object : MockGithubRequest() {
-            override suspend fun getRepositoryNotifications() = super.getRepositoryNotifications().copy(
-                notificationThreads = super.getRepositoryNotifications().notificationThreads.map {
-                    it.copy(reason = "review_requested")
-                }
-            )
-
             override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =
                 super.getAPullRequest(pullNumber, lastModified).copy(
                     pullRequest = super.getAPullRequest(

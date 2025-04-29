@@ -125,6 +125,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         val urlPaths = pullRequestUrl.split(Regex("//|/"))
                         val pullRequestNumber = urlPaths.last()
                         val pullRequestResponse = getPullRequest(pullRequestNumber)
+                        // This if statement is invalid you cannot get a closed pr that is not present in the notificationThreadIdToPullRequestNumber map you would have seen the notification before this means the notification never gets marked as read on close. fix it.
                         if (pullRequestResponse.state == PullRequestState.CLOSED) {
                             githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
                         } else {
@@ -140,6 +141,8 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     }
                 }
             }
+
+            // clean up closed PRs every hour
             val elapsedTime: Long = lastCleanupTime.elapsedNow().inWholeMilliseconds
             if (elapsedTime > hourInMillis) {
                 val iterator = notificationThreadIdToPullRequestNumber.iterator()
@@ -188,8 +191,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
-    // test this method actually works
-    public suspend fun getPullRequest(
+    suspend fun getPullRequest(
         pullNumber: String,
     ): PullRequest {
 
