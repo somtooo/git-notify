@@ -37,7 +37,7 @@ interface ReviewRequestedNotifier {
     fun onReviewRequested(context: ReviewRequestedContext)
 }
 
-
+//Todo: Fix ugly looking code
 @Service(Service.Level.PROJECT)
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
     private var githubRequests = GithubRequests()
@@ -45,7 +45,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
 
     private val notifier =
         NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
-    private val errorNotifier = NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon")
+    private val errorNotifier = NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
     private val logger = logger<GithubNotification>()
 
     private val maxRetries = 5
