@@ -16,7 +16,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -151,10 +150,22 @@ class GithubNotificationTest : BasePlatformTestCase() {
 
     @OptIn(ExperimentalTime::class)
     @Test
-    fun testCleanupMarksNotificationAsReadForClosedPR() = runTest(testDispatcher) {
+    fun testClosedPRNotificationRemovesFromMapImmediately() = runTest(testDispatcher) {
+        val closedPR = "1"
+        val threadId = "thread1"
+        val notificationMap = mutableMapOf(threadId to closedPR)
         var markAsReadCalled = false
-
         val mockRequests = object : MockGithubRequest() {
+            override suspend fun getRepositoryNotifications() = super.getRepositoryNotifications().copy(
+                notificationThreads = listOf(
+                    super.getRepositoryNotifications().notificationThreads.first().copy(
+                        id = threadId,
+                        subject = super.getRepositoryNotifications().notificationThreads.first().subject.copy(url = "https://api.github.com/repos/owner/repo/pulls/$closedPR"),
+                        reason = "review_requested"
+                    )
+                )
+            )
+
             override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =
                 super.getAPullRequest(pullNumber, lastModified).copy(
                     pullRequest = super.getAPullRequest(
@@ -167,11 +178,81 @@ class GithubNotificationTest : BasePlatformTestCase() {
                 markAsReadCalled = true
             }
         }
+        githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
+        val (_, updatedMap, _) = githubNotification.pollOnce(notificationMap)
+        assertFalse("Closed PR should be removed from the map immediately", updatedMap.containsKey(threadId))
+        assertTrue("markNotificationThreadAsRead should have been called for closed PR", markAsReadCalled)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testNoNotificationForClosedPR() = runTest(testDispatcher) {
+        val closedPR = "2"
+        val threadId = "thread2"
+        val notificationMap = mutableMapOf<String, String>()
+        var notificationShown = false
+        val mockRequests = object : MockGithubRequest() {
+            override suspend fun getRepositoryNotifications() = super.getRepositoryNotifications().copy(
+                notificationThreads = listOf(
+                    super.getRepositoryNotifications().notificationThreads.first().copy(
+                        id = threadId,
+                        subject = super.getRepositoryNotifications().notificationThreads.first().subject.copy(url = "https://api.github.com/repos/owner/repo/pulls/$closedPR"),
+                        reason = "review_requested"
+                    )
+                )
+            )
+
+            override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =
+                super.getAPullRequest(pullNumber, lastModified).copy(
+                    pullRequest = super.getAPullRequest(
+                        pullNumber,
+                        lastModified
+                    ).pullRequest.copy(state = PullRequestState.CLOSED)
+                )
+        }
+        githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
+        val connection = project.messageBus.connect()
+        connection.subscribe(Notifications.TOPIC, object : Notifications {
+            override fun notify(notification: Notification) {
+                if (notification.content.contains("requested you review their PR")) {
+                    notificationShown = true
+                }
+            }
+        })
+        githubNotification.pollOnce(notificationMap)
+        assertFalse("No notification should be shown for closed PR", notificationShown)
+        connection.disconnect()
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test
+    fun testClosedPRIsRemovedFromCache() = runTest(testDispatcher) {
+        val closedPR = "123"
+        val threadId = "thread3"
+        val defaultMockRequest = MockGithubRequest()
+        val mockRequests = object : MockGithubRequest() {
+            override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =
+                super.getAPullRequest(pullNumber, lastModified).copy(
+                    pullRequest = super.getAPullRequest(
+                        pullNumber,
+                        lastModified
+                    ).pullRequest.copy(state = PullRequestState.CLOSED)
+                )
+        }
+        githubNotification.setGithubRequestsForTest(githubNotification, defaultMockRequest)
+        githubNotification.getPullRequest(closedPR)
+
+        val lastPullRequestField = GithubNotification::class.java.getDeclaredField("lastPullRequest")
+        lastPullRequestField.isAccessible = true
+        val lastPullRequest = lastPullRequestField.get(githubNotification) as Map<*, *>
+        assertTrue("Closed PR should be in the lastPullRequest cache", lastPullRequest.containsKey(closedPR))
+
 
         githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
-
-        githubNotification.pollOnce()
-        assertTrue("markNotificationThreadAsRead should have been called for closed PR", markAsReadCalled)
+        githubNotification.getPullRequest(closedPR)
+        // After calling getPullRequest for closed PR, it should be removed from cache
+        val lastPullRequest2 = lastPullRequestField.get(githubNotification) as Map<*, *>
+        assertFalse("Closed PR should be removed from lastPullRequest cache", lastPullRequest2.containsKey(closedPR))
     }
 
     @OptIn(ExperimentalTime::class)
@@ -203,56 +284,6 @@ class GithubNotificationTest : BasePlatformTestCase() {
             notificationShown
         )
         connection.disconnect()
-    }
-
-    @OptIn(ExperimentalTime::class)
-    @Test
-    fun testMapCleanupRemovesClosedPRsAfterHour() = runTest(testDispatcher) {
-        val hourInMillis = 3600000L
-        val closedPR = "1"
-        val openPR = "2"
-        val notificationMap = mutableMapOf(
-            "thread1" to closedPR,
-            "thread2" to openPR
-        )
-        // Simulate lastCleanupTime so that elapsedNow() > hourInMillis
-        val fakeTimeMark = object : kotlin.time.TimeMark {
-            override fun elapsedNow() = (hourInMillis + 1).milliseconds
-            override fun hasPassedNow() = true
-            override fun plus(duration: kotlin.time.Duration) = this
-            override fun minus(duration: kotlin.time.Duration) = this
-        }
-        val mockRequests = object : MockGithubRequest() {
-            override suspend fun getAPullRequest(
-                pullNumber: String,
-                lastModified: String?
-            ): com.github.somtooo.gitnotify.lib.github.data.PullRequestsResponse {
-                return if (pullNumber == closedPR) {
-                    super.getAPullRequest(pullNumber, lastModified).copy(
-                        pullRequest = super.getAPullRequest(
-                            pullNumber,
-                            lastModified
-                        ).pullRequest.copy(state = PullRequestState.CLOSED)
-                    )
-                } else {
-                    super.getAPullRequest(pullNumber, lastModified).copy(
-                        pullRequest = super.getAPullRequest(
-                            pullNumber,
-                            lastModified
-                        ).pullRequest.copy(state = PullRequestState.OPEN)
-                    )
-                }
-            }
-        }
-        githubNotification.setGithubRequestsForTest(githubNotification, mockRequests)
-        val (_, updatedMap, _, _) = githubNotification.pollOnce(
-            notificationThreadIdToPullRequestNumber = notificationMap,
-            retryCountIn = 0,
-            lastCleanupTimeIn = fakeTimeMark,
-            hourInMillis = hourInMillis
-        )
-        assertFalse("Closed PR should be removed from the map", updatedMap.containsValue(closedPR))
-        assertTrue("Open PR should remain in the map", updatedMap.containsValue(openPR))
     }
 
     @Test

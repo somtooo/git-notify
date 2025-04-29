@@ -16,8 +16,6 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.util.*
 import kotlinx.coroutines.*
-import kotlin.time.TimeMark
-import kotlin.time.TimeSource
 
 // Helper data class for returning 4 values from pollOnce
 // Must be top-level for destructuring to work
@@ -74,22 +72,17 @@ class GithubNotification(private val project: Project, private val scope: Corout
     ): Job {
         val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var retryCount = 0
-        var lastCleanupTime: TimeMark = TimeSource.Monotonic.markNow()
-        val hourInMillis = 3600000L
         return scope.launch(dispatcher) {
             while (isActive) {
                 try {
-                    val (baseDelay, updatedMap, updatedRetry, updatedCleanup) = pollOnce(
+                    val (baseDelay, updatedMap, updatedRetry) = pollOnce(
                         notificationThreadIdToPullRequestNumber,
-                        retryCount,
-                        lastCleanupTime,
-                        hourInMillis
+                        retryCount
                     )
                     // update state for next iteration
                     notificationThreadIdToPullRequestNumber.clear()
                     notificationThreadIdToPullRequestNumber.putAll(updatedMap)
                     retryCount = updatedRetry
-                    lastCleanupTime = updatedCleanup
                     delay(baseDelay)
                 } catch (e: Exception) {
                     logger.error("Unexpected error in notification polling", e)
@@ -101,17 +94,14 @@ class GithubNotification(private val project: Project, private val scope: Corout
 
     /**
      * pollOnce now takes state as parameters (with defaults for tests).
-     * Returns baseDelay, updated map, retry count, and cleanup time.
+     * Returns baseDelay, updated map, and retry count.
      */
     internal suspend fun pollOnce(
         notificationThreadIdToPullRequestNumber: MutableMap<String, String> = mutableMapOf(),
         retryCountIn: Int = 0,
-        lastCleanupTimeIn: TimeMark = TimeSource.Monotonic.markNow(),
-        hourInMillis: Long = 3600000L
-    ): Quad<Long, MutableMap<String, String>, Int, TimeMark> {
+    ): Triple<Long, MutableMap<String, String>, Int> {
         var baseDelay = initialBaseDelay
         var retryCount = retryCountIn
-        var lastCleanupTime: TimeMark = lastCleanupTimeIn
         try {
             val notificationThreadResponses = githubRequests.getRepositoryNotifications()
             notificationThreadResponses.headers["x-poll-interval"]?.let {
@@ -119,41 +109,27 @@ class GithubNotification(private val project: Project, private val scope: Corout
                 baseDelay = pollInterval * baseDelay / defaultXPollHeader
             }
             for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
-                if (notificationThreadResponse.reason == reasonKey) {
+                val pullRequestUrl = notificationThreadResponse.subject.url
+                val urlPaths = pullRequestUrl.split(Regex("//|/"))
+                val pullRequestNumber = urlPaths.last()
+                val pullRequestResponse = getPullRequest(pullRequestNumber)
+                if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                    // If the PR is closed, mark as read and remove from the map if present
+                    githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                    notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
+                } else if (notificationThreadResponse.reason == reasonKey) {
+                    // Only notify if not already tracked
                     if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null) {
-                        val pullRequestUrl = notificationThreadResponse.subject.url
-                        val urlPaths = pullRequestUrl.split(Regex("//|/"))
-                        val pullRequestNumber = urlPaths.last()
-                        val pullRequestResponse = getPullRequest(pullRequestNumber)
-                        // This if statement is invalid you cannot get a closed pr that is not present in the notificationThreadIdToPullRequestNumber map you would have seen the notification before this means the notification never gets marked as read on close. fix it.
-                        if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                            githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
-                        } else {
-                            val content =
-                                "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
-                            notifyPullRequest(content)
-                            val publisher =
-                                project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
-                            publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
-                            notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
-                                pullRequestNumber
-                        }
+                        val content =
+                            "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
+                        notifyPullRequest(content)
+                        val publisher =
+                            project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
+                        publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
+                        notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
+                            pullRequestNumber
                     }
                 }
-            }
-
-            // clean up closed PRs every hour
-            val elapsedTime: Long = lastCleanupTime.elapsedNow().inWholeMilliseconds
-            if (elapsedTime > hourInMillis) {
-                val iterator = notificationThreadIdToPullRequestNumber.iterator()
-                while (iterator.hasNext()) {
-                    val entry = iterator.next()
-                    val pullRequestResponse = getPullRequest(entry.value)
-                    if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                        iterator.remove()
-                    }
-                }
-                lastCleanupTime = TimeSource.Monotonic.markNow()
             }
             retryCount = 0
         } catch (e: Exception) {
@@ -165,7 +141,38 @@ class GithubNotification(private val project: Project, private val scope: Corout
                 throw ex // rethrow so polling loop stops on unhandled exceptions
             }
         }
-        return Quad(baseDelay, notificationThreadIdToPullRequestNumber, retryCount, lastCleanupTime)
+        return Triple(baseDelay, notificationThreadIdToPullRequestNumber, retryCount)
+    }
+
+    internal suspend fun getPullRequest(
+        pullNumber: String,
+    ): PullRequest {
+
+        try {
+            val response = githubRequests.getAPullRequest(pullNumber, pullRequestLastModified[pullNumber])
+
+            response.headers["last-modified"]?.let { modifiedHeader ->
+                pullRequestLastModified = pullRequestLastModified + (pullNumber to modifiedHeader)
+            }
+            if (response.pullRequest.state == PullRequestState.CLOSED) {
+                // Remove closed PR from caches
+                pullRequestLastModified = pullRequestLastModified - pullNumber
+                lastPullRequest = lastPullRequest - pullNumber
+            } else {
+                lastPullRequest = lastPullRequest + (pullNumber to response.pullRequest)
+            }
+            return response.pullRequest
+        } catch (e: RedirectResponseException) {
+            if (e.response.status == HttpStatusCode.NotModified) {
+                e.response.headers["last-modified"]?.let { modifiedHeader ->
+                    pullRequestLastModified = pullRequestLastModified + (pullNumber to modifiedHeader)
+                }
+                return lastPullRequest[pullNumber]
+                    ?: throw IllegalStateException("No cached pull request found for $pullNumber")
+            }
+
+            throw e
+        }
     }
 
     private fun handleRateLimitException(e: Exception, retryCount: Int): Long {
@@ -191,47 +198,18 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
-    suspend fun getPullRequest(
-        pullNumber: String,
-    ): PullRequest {
-
-        try {
-            val response = githubRequests.getAPullRequest(pullNumber, pullRequestLastModified[pullNumber])
-
-            response.headers["last-modified"]?.let { modifiedHeader ->
-                pullRequestLastModified = pullRequestLastModified + (pullNumber to modifiedHeader)
-            }
-            lastPullRequest = lastPullRequest + (pullNumber to response.pullRequest)
-            return response.pullRequest
-        } catch (e: RedirectResponseException) {
-            if (e.response.status == HttpStatusCode.NotModified) {
-                e.response.headers["last-modified"]?.let { modifiedHeader ->
-                    pullRequestLastModified = pullRequestLastModified + (pullNumber to modifiedHeader)
-                }
-                return lastPullRequest[pullNumber]
-                    ?: throw IllegalStateException("No cached pull request found for $pullNumber")
-            }
-
-            throw e
-        }
-    }
-
     private fun handleRateLimiting(response: HttpResponse, retryCount: Int): Long {
-
-        // Primary rate limit check
-        if (response.headers["x-ratelimit-remaining"] == "0") {
-            val resetTime = response.headers["x-ratelimit-reset"]?.toLongOrNull()
-            if (resetTime != null) {
-                val currentTime = System.currentTimeMillis() / 1000
-                val newDelay = (resetTime - currentTime).coerceAtLeast(0) * 1000
-                logger.warn("Primary rate limit exceeded. Setting delay to ${newDelay / 1000} seconds before retrying")
-                notifyError("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
-                return newDelay
-            }
+        val responseHeaders = response.headers
+        val resetTime = responseHeaders["x-ratelimit-reset"]?.toLongOrNull()
+        if (resetTime != null) {
+            val currentTime = System.currentTimeMillis() / 1000
+            val newDelay = (resetTime - currentTime).coerceAtLeast(0) * 1000
+            logger.warn("Primary rate limit exceeded. Setting delay to ${newDelay / 1000} seconds before retrying")
+            notifyError("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
+            return newDelay
         }
 
-        // Secondary rate limit check
-        val retryAfter = response.headers["retry-after"]?.toLongOrNull()
+        val retryAfter = responseHeaders["retry-after"]?.toLongOrNull()
         if (retryAfter != null) {
             val newDelay = retryAfter * 1000
             logger.warn("Secondary rate limit exceeded. Retry after $retryAfter seconds")
@@ -239,7 +217,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
             return newDelay
         }
 
-        // Exponential backoff for secondary rate limit without retry-after header
         if (retryCount < maxRetries) {
             val exponentialDelay = (60000L * (1L shl (retryCount - 1))).coerceAtMost(3600000L) // Max 1 hour
             logger.warn("Secondary rate limit exceeded. Using exponential backoff: ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
