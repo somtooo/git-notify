@@ -110,6 +110,9 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     val urlPaths = pullRequestUrl.split(Regex("//|/"))
                     val pullRequestNumber = urlPaths.last()
                     val pullRequestResponse = getPullRequest(pullRequestNumber)
+                    if (pullRequestResponse.state == PullRequestState.CLOSED) {
+                        githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                    }
                     println("Im a pull request response ${pullRequestResponse.number}")
                     if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null && notificationThreadResponse.reason == reasonKey && pullRequestResponse.state == PullRequestState.OPEN) {
                         println("I should save in the map")
@@ -126,11 +129,12 @@ class GithubNotification(private val project: Project, private val scope: Corout
                         notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
                             println("Thread ID: $key, Pull Request Number: $value")
                         }
-                    } else if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null && pullRequestResponse.state == PullRequestState.CLOSED) {
+                    }
+
+                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null && pullRequestResponse.state == PullRequestState.CLOSED) {
                         println("Im already in the map")
                         println("Im deleting from the map")
                         // If the PR is closed, mark as read and remove from the map if present
-                        githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
                         notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
                     }
                     println("this is notification response size in if ${notificationThreadResponses.notificationThreads.size}")
