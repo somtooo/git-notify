@@ -17,10 +17,6 @@ import io.ktor.http.*
 import io.ktor.util.*
 import kotlinx.coroutines.*
 
-// Helper data class for returning 4 values from pollOnce
-// Must be top-level for destructuring to work
-data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
-
 data class ReviewRequestedContext(
     val pullRequestUrl: String,
 )
@@ -37,23 +33,15 @@ interface ReviewRequestedNotifier {
     fun onReviewRequested(context: ReviewRequestedContext)
 }
 
-//Todo: Fix ugly looking code
 @Service(Service.Level.PROJECT)
 class GithubNotification(private val project: Project, private val scope: CoroutineScope) {
     private var githubRequests = GithubRequests()
     private val reasonKey = "review_requested"
 
-    private val notifier =
-        NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
-    private val errorNotifier = NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
     private val logger = logger<GithubNotification>()
 
-    private val maxRetries = 5
-
-    private val initialBaseDelay = 3000L
     private var pullRequestLastModified: Map<String, String> = mapOf()
     private var lastPullRequest: Map<String, PullRequest> = mapOf()
-    private var defaultXPollHeader = 60000L
 
     companion object {
         fun getInstance(project: Project): GithubNotification {
@@ -70,18 +58,22 @@ class GithubNotification(private val project: Project, private val scope: Corout
         dispatcher: CoroutineDispatcher = Dispatchers.Default
 
     ): Job {
-        val notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
+        var notificationThreadIdToPullRequestNumber = mutableMapOf<String, String>()
         var retryCount = 0
         return scope.launch(dispatcher) {
             while (isActive) {
                 try {
                     val (baseDelay, updatedMap, updatedRetry) = pollOnce(
                         notificationThreadIdToPullRequestNumber,
-                        retryCount
+                        retryCountIn = retryCount
                     )
                     // update state for next iteration
-                    notificationThreadIdToPullRequestNumber.clear()
-                    notificationThreadIdToPullRequestNumber.putAll(updatedMap)
+                    notificationThreadIdToPullRequestNumber = updatedMap
+                    println("Im about to print the map in the pollForNotifications")
+                    notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
+                        println("Thread ID: $key, Pull Request Number: $value")
+                    }
+                    println("This is delay $baseDelay")
                     retryCount = updatedRetry
                     delay(baseDelay)
                 } catch (e: Exception) {
@@ -100,37 +92,55 @@ class GithubNotification(private val project: Project, private val scope: Corout
         notificationThreadIdToPullRequestNumber: MutableMap<String, String> = mutableMapOf(),
         retryCountIn: Int = 0,
     ): Triple<Long, MutableMap<String, String>, Int> {
-        var baseDelay = initialBaseDelay
+        var baseDelay = 3000L
         var retryCount = retryCountIn
+        val defaultXPollHeader = 60000L
+
         try {
             val notificationThreadResponses = githubRequests.getRepositoryNotifications()
             notificationThreadResponses.headers["x-poll-interval"]?.let {
                 val pollInterval = it.toLong()
                 baseDelay = pollInterval * baseDelay / defaultXPollHeader
             }
+
+            // Notification not marked as read
             for (notificationThreadResponse in notificationThreadResponses.notificationThreads) {
                 if (notificationThreadResponse.subject.type == "PullRequest") {
                     val pullRequestUrl = notificationThreadResponse.subject.url
                     val urlPaths = pullRequestUrl.split(Regex("//|/"))
                     val pullRequestNumber = urlPaths.last()
                     val pullRequestResponse = getPullRequest(pullRequestNumber)
-                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null && notificationThreadResponse.reason == reasonKey) {
+                    println("Im a pull request response ${pullRequestResponse.number}")
+                    if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null && notificationThreadResponse.reason == reasonKey && pullRequestResponse.state == PullRequestState.OPEN) {
+                        println("I should save in the map")
                         val content =
                             "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
                         notifyPullRequest(content)
+                        println("I have notified")
                         val publisher =
                             project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
                         publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
                         notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
                             pullRequestNumber
-                    } else if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null) {
-                        if (pullRequestResponse.state == PullRequestState.CLOSED) {
-                            // If the PR is closed, mark as read and remove from the map if present
-                            githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
-                            notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
+                        println("Im about to print the map")
+                        notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
+                            println("Thread ID: $key, Pull Request Number: $value")
                         }
+                    } else if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null && pullRequestResponse.state == PullRequestState.CLOSED) {
+                        println("Im already in the map")
+                        println("Im deleting from the map")
+                        // If the PR is closed, mark as read and remove from the map if present
+                        githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
+                        notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
                     }
+                    println("this is notification response size in if ${notificationThreadResponses.notificationThreads.size}")
                 }
+                println("this is notification response size outside if ${notificationThreadResponses.notificationThreads.size}")
+            }
+            println("this is notification response size outside loop ${notificationThreadResponses.notificationThreads.size}")
+            println("Im about to print the map in the pollForNotifications outside loop")
+            notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
+                println("Thread ID: $key, Pull Request Number: $value")
             }
             retryCount = 0
         } catch (e: Exception) {
@@ -200,13 +210,14 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     private fun handleRateLimiting(response: HttpResponse, retryCount: Int): Long {
+        val maxRetries = 5
         val responseHeaders = response.headers
         val resetTime = responseHeaders["x-ratelimit-reset"]?.toLongOrNull()
         if (resetTime != null) {
             val currentTime = System.currentTimeMillis() / 1000
             val newDelay = (resetTime - currentTime).coerceAtLeast(0) * 1000
             logger.warn("Primary rate limit exceeded. Setting delay to ${newDelay / 1000} seconds before retrying")
-            notifyError("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
+            notifyInfo("Primary rate limit exceeded. Will retry in ${newDelay / 1000} seconds")
             return newDelay
         }
 
@@ -214,14 +225,14 @@ class GithubNotification(private val project: Project, private val scope: Corout
         if (retryAfter != null) {
             val newDelay = retryAfter * 1000
             logger.warn("Secondary rate limit exceeded. Retry after $retryAfter seconds")
-            notifyError("Secondary rate limit exceeded. Will retry in $retryAfter seconds")
+            notifyInfo("Secondary rate limit exceeded. Will retry in $retryAfter seconds")
             return newDelay
         }
 
         if (retryCount < maxRetries) {
             val exponentialDelay = (60000L * (1L shl (retryCount - 1))).coerceAtMost(3600000L) // Max 1 hour
             logger.warn("Secondary rate limit exceeded. Using exponential backoff: ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
-            notifyError("Secondary rate limit exceeded. Will retry in ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
+            notifyInfo("Secondary rate limit exceeded. Will retry in ${exponentialDelay / 1000} seconds (attempt $retryCount of $maxRetries)")
             return exponentialDelay
         } else {
             notifyError("Maximum retry attempts reached for secondary rate limit. Please try again later.")
@@ -231,11 +242,12 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     private fun notifyPullRequest(content: String) {
-        val notify = notifier.createNotification(
-            title = "Git-Notify",
-            content,
-            NotificationType.INFORMATION
-        )
+        val notify = NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
+            .createNotification(
+                title = "Git-Notify",
+                content,
+                NotificationType.INFORMATION
+            )
         notify.addAction(NotificationAction.createSimpleExpiring("Reviewed") {
             notify.expire()
         })
@@ -243,11 +255,28 @@ class GithubNotification(private val project: Project, private val scope: Corout
     }
 
     private fun notifyError(content: String) {
-        errorNotifier.createNotification(
-            title = "Git-Notify Error",
+        val notify = NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon").createNotification(
+            title = "Git-Notify",
             content,
             NotificationType.ERROR
+        )
+
+        notify.addAction(NotificationAction.createSimpleExpiring("Restart plugin") {
+            notify.expire()
+            scope.launch {
+                ConfigurationCheckerService.getInstance(project).validateConfiguration()
+            }
+        })
+        notify.notify(project)
+    }
+
+    private fun notifyInfo(content: String) {
+        NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon").createNotification(
+            title = "Git-Notify",
+            content,
+            NotificationType.INFORMATION
         ).notify(project)
+
     }
 }
 

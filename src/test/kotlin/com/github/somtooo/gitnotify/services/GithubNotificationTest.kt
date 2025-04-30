@@ -140,7 +140,7 @@ class GithubNotificationTest : BasePlatformTestCase() {
 
         try {
             githubNotification.pollOnce()
-        } catch (e: Error) {
+        } catch (_: Error) {
         }
 
         assertTrue("Error notification should have been shown on exception", errorNotificationShown)
@@ -219,7 +219,6 @@ class GithubNotificationTest : BasePlatformTestCase() {
     @Test
     fun testClosedPRIsRemovedFromCache() = runTest(testDispatcher) {
         val closedPR = "123"
-        val threadId = "thread3"
         val defaultMockRequest = MockGithubRequest()
         val mockRequests = object : MockGithubRequest() {
             override suspend fun getAPullRequest(pullNumber: String, lastModified: String?) =

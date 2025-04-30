@@ -44,11 +44,6 @@ open class GithubRequests {
                 headers {
                     addGithubHeaders()
                 }
-                etag?.let {
-                    headers {
-                        append("If-None-Match", it)
-                    }
-                }
             }
 
             // Store the ETag header for future requests

@@ -77,7 +77,7 @@ data class Repository(
     @SerialName("git_tags_url")
     val gitTagsUrl: String,
     @SerialName("git_url")
-    val gitUrl: String?,
+    val gitUrl: String? = null,
     @SerialName("issue_comment_url")
     val issueCommentUrl: String,
     @SerialName("issue_events_url")

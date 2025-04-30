@@ -52,7 +52,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
         const val GIT_HUB_TOKEN_KEY = "GITHUB_TOKEN"
         private val LOG = logger<ConfigurationCheckerService>()
         fun getInstance(project: Project): ConfigurationCheckerService {
-            return project.service();
+            return project.service()
         }
     }
 
@@ -65,12 +65,26 @@ internal class ConfigurationCheckerService(private val project: Project, private
 
         for (check in checks) {
             val result = check()
-            if (!result) return false
+            if (!result) {
+                val notifyError = NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon")
+                    .createNotification(title = "Git-Notify", "Validation failed", NotificationType.ERROR)
+                notifyError.addAction(NotificationAction.createSimpleExpiring("Restart plugin") {
+                    notifyError.expire()
+                    scope.launch {
+                        project.service<ConfigurationCheckerService>().validateConfiguration()
+                    }
+                })
+                return false
+            }
         }
 
         val notify = NotificationGroupManager.getInstance().getNotificationGroup("NonStickyBalloon")
-            .createNotification(title = "Git-Notify", "Validation Succesfull", NotificationType.INFORMATION)
+            .createNotification(title = "Git-Notify", "Validation successful", NotificationType.INFORMATION)
         notify.notify(project)
+
+        scope.launch {
+            GithubNotification.getInstance(project).pollForNotifications()
+        }
         return true
     }
 
@@ -110,20 +124,20 @@ internal class ConfigurationCheckerService(private val project: Project, private
 
     fun hasValidGithubTokenSetInRcFile(): Boolean {
         try {
-            val result = parseRcFile(rcFilePath);
+            val result = parseRcFile(rcFilePath)
             if (result[GIT_HUB_TOKEN_KEY] === null || result[GIT_HUB_TOKEN_KEY]?.isEmpty() == true) {
                 notifyError("Github token key not set in rc file. Please set for plugin to function")
                 LOG.warn("Github token key not set in rc file. Please set for plugin to function")
-                return false;
+                return false
             }
 
             val isTokenValid = checkTokenIsValid(result[GIT_HUB_TOKEN_KEY]!!)
             if (!isTokenValid) {
                 notifyError("Github token authentication failed set a valid token in rc file")
                 LOG.warn("Github token authentication failed set a valid token in rc file")
-                return false;
+                return false
             }
-            return true;
+            return true
         } catch (e: Exception) {
             when (e) {
                 is FileNotFoundException -> {
@@ -143,7 +157,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
     private fun notifyError(content: String) {
         val notify: Notification =
             configurationCheckerNotification.createNotification(title = "Git-Notify", content, NotificationType.ERROR)
-        notify.addAction(NotificationAction.createSimpleExpiring("Validate Again") {
+        notify.addAction(NotificationAction.createSimpleExpiring("Validate again") {
             notify.expire()
 
             // Verify later that this is OK
@@ -205,7 +219,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
             for (remote in remotes) {
                 val urls = remote.urls
                 for (url in urls) {
-                    if (remote.name == "origin" && url.contains("github.com")) return url;
+                    if (remote.name == "origin" && url.contains("github.com")) return url
                 }
             }
         }
@@ -218,7 +232,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
 
         if (!file.exists()) {
             logger<ConfigurationCheckerService>().debug(".gitnotifyrc file does not exist")
-            throw FileNotFoundException("RC File does not exist");
+            throw FileNotFoundException("RC File does not exist")
         }
 
         file.forEachLine { line ->
@@ -233,7 +247,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
             }
         }
 
-        return result;
+        return result
     }
 
     fun buildGithubUrlPathParams(url: String): GithubUrlPathParameters {
@@ -241,7 +255,7 @@ internal class ConfigurationCheckerService(private val project: Project, private
         val repo = urlPaths[urlPaths.size - 1].split(".")[0]
         val owner = urlPaths[urlPaths.size - 2]
 
-        return GithubUrlPathParameters(owner, repo);
+        return GithubUrlPathParameters(owner, repo)
     }
 
 }
