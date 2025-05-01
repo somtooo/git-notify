@@ -100,7 +100,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
             val notificationThreadResponses = githubRequests.getRepositoryNotifications()
             notificationThreadResponses.headers["x-poll-interval"]?.let {
                 val pollInterval = it.toLong()
-                baseDelay = pollInterval * baseDelay / defaultXPollHeader
+                baseDelay = (pollInterval * baseDelay / defaultXPollHeader) * 1000L
             }
 
             // Notification not marked as read
@@ -159,6 +159,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         return Triple(baseDelay, notificationThreadIdToPullRequestNumber, retryCount)
     }
 
+    // this is not needed here
     internal suspend fun getPullRequest(
         pullNumber: String,
     ): PullRequest {
@@ -179,9 +180,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
             return response.pullRequest
         } catch (e: RedirectResponseException) {
             if (e.response.status == HttpStatusCode.NotModified) {
-                e.response.headers["last-modified"]?.let { modifiedHeader ->
-                    pullRequestLastModified = pullRequestLastModified + (pullNumber to modifiedHeader)
-                }
+                println("USING CACHE")
                 return lastPullRequest[pullNumber]
                     ?: throw IllegalStateException("No cached pull request found for $pullNumber")
             }
@@ -245,6 +244,7 @@ class GithubNotification(private val project: Project, private val scope: Corout
         }
     }
 
+    // do we want to mark as read on click here?
     private fun notifyPullRequest(content: String) {
         val notify = NotificationGroupManager.getInstance().getNotificationGroup("StickyBalloon")
             .createNotification(

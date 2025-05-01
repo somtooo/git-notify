@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
 
 open class GithubRequests {
 
-
+    // Todo: figure out caching
     private val client = HttpClient {
         expectSuccess = true
         install(ContentNegotiation) {
@@ -31,6 +31,8 @@ open class GithubRequests {
             connectTimeoutMillis = 15000
         }
     }
+
+    private var lastModifiedNotification: String? = null
     private var etag: String? = null
     private var lastNotifications: List<NotificationThread> = emptyList()
 
@@ -43,13 +45,19 @@ open class GithubRequests {
             val response = client.get(url) {
                 headers {
                     addGithubHeaders()
+                    lastModifiedNotification?.let {
+                        append("If-Modified-Since", lastModifiedNotification!!)
+                    }
+
+                    etag?.let {
+                        append("If-None-Match", etag!!)
+                    }
                 }
             }
 
-            // Store the ETag header for future requests
-            response.headers["etag"]?.let {
-                etag = it
-            }
+
+            lastModifiedNotification = response.headers["last-modified"]
+            etag = response.headers["etag"]?.trim()?.takeIf { it.isNotEmpty() }
 
             val notifications = response.body<List<NotificationThread>>()
             lastNotifications = notifications
@@ -58,14 +66,10 @@ open class GithubRequests {
         } catch (e: RedirectResponseException) {
             if (e.response.status == HttpStatusCode.NotModified) {
                 // Even on 304, update the ETag if present
-                e.response.headers["etag"]?.let {
-                    etag = it
-                }
                 return NotificationThreadResponse(notificationThreads = lastNotifications, headers = e.response.headers)
             }
             throw e
         } catch (e: ClientRequestException) {
-            val response = e.response
             throw e
 
         }
