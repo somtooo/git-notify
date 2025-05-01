@@ -33,7 +33,6 @@ open class GithubRequests {
     }
 
     private var lastModifiedNotification: String? = null
-    private var etag: String? = null
     private var lastNotifications: List<NotificationThread> = emptyList()
 
     open suspend fun getRepositoryNotifications(): NotificationThreadResponse {
@@ -48,16 +47,13 @@ open class GithubRequests {
                     lastModifiedNotification?.let {
                         append("If-Modified-Since", lastModifiedNotification!!)
                     }
-
-                    etag?.let {
-                        append("If-None-Match", etag!!)
-                    }
                 }
             }
 
 
-            lastModifiedNotification = response.headers["last-modified"]
-            etag = response.headers["etag"]?.trim()?.takeIf { it.isNotEmpty() }
+            response.headers["last-modified"]?.let {
+                lastModifiedNotification = response.headers["last-modified"]
+            }
 
             val notifications = response.body<List<NotificationThread>>()
             lastNotifications = notifications
@@ -96,12 +92,18 @@ open class GithubRequests {
 
     // Skip no need to test
     open suspend fun markNotificationThreadAsRead(threadId: String) {
-        val url = "https://api.github.com/notifications/threads/$threadId"
-        client.patch(url) {
-            headers {
-                addGithubHeaders()
+        try {
+            val url = "https://api.github.com/notifications/threads/$threadId"
+            client.patch(url) {
+                headers {
+                    addGithubHeaders()
+                }
             }
+            lastNotifications = lastNotifications.filter { it.id != threadId }
+        } catch (e: Exception) {
+            throw e
         }
+
     }
 
     private fun HeadersBuilder.addGithubHeaders() {
