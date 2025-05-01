@@ -1,4 +1,4 @@
-# Github-pr-notificationsdw
+# Github-pr-notificationsdwee
 
 ![Build](https://github.com/somtooo/git-notify/workflows/Build/badge.svg)
 [![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
