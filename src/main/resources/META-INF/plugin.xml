@@ -6,17 +6,19 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
-    <depends>org.jetbrains.plugins.github</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="com.github.somtooo.gitnotify.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <notificationGroup displayType="BALLOON" id="GithubPullRequest"/>
-        <postStartupActivity implementation="com.github.somtooo.gitnotify.extensions.ConfigurationCheckerStartupActivity"/>
+        <notificationGroup displayType="STICKY_BALLOON" id="StickyBalloon"/>
+        <notificationGroup displayType="BALLOON" id="NonStickyBalloon"/>
+        <postStartupActivity
+                implementation="com.github.somtooo.gitnotify.extensions.ConfigurationCheckerStartupActivity"/>
     </extensions>
 
     <applicationListeners>
-        <listener class="com.github.somtooo.gitnotify.listeners.MyApplicationActivationListener" topic="com.intellij.openapi.application.ApplicationActivationListener"/>
+        <listener class="com.github.somtooo.gitnotify.listeners.MyApplicationActivationListener"
+                  topic="com.intellij.openapi.application.ApplicationActivationListener"/>
     </applicationListeners>
 </idea-plugin>
