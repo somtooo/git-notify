@@ -2,6 +2,7 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
+val ktorVersion = "2.3.12"
 plugins {
     id("java") // Java support
     alias(libs.plugins.kotlin) // Kotlin support
@@ -9,6 +10,7 @@ plugins {
     alias(libs.plugins.changelog) // Gradle Changelog Plugin
     alias(libs.plugins.qodana) // Gradle Qodana Plugin
     alias(libs.plugins.kover) // Gradle Kover Plugin
+    kotlin("plugin.serialization") version "2.1.20"
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -33,6 +35,9 @@ repositories {
 dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.mockito)
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
 
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
@@ -48,7 +53,15 @@ dependencies {
         zipSigner()
         testFramework(TestFrameworkType.Platform)
     }
-
+    implementation("io.ktor:ktor-client-cio:${ktorVersion}") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+    }
+    implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+    }
+    implementation("io.ktor:ktor-serialization-kotlinx-json:${ktorVersion}") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+    }
 }
 
 
@@ -100,7 +113,8 @@ intellijPlatform {
         // The pluginVersion is based on the SemVer (https://semver.org) and supports pre-release labels, like 2.1.7-alpha.3
         // Specify pre-release label to publish the plugin in a custom Release Channel automatically. Read more:
         // https://plugins.jetbrains.com/docs/intellij/deployment.html#specifying-a-release-channel
-        channels = providers.gradleProperty("pluginVersion").map { listOf(it.substringAfter('-', "").substringBefore('.').ifEmpty { "default" }) }
+        channels = providers.gradleProperty("pluginVersion")
+            .map { listOf(it.substringAfter('-', "").substringBefore('.').ifEmpty { "default" }) }
     }
 
     pluginVerification {
