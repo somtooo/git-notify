@@ -1,0 +1,26 @@
+{
+  "state": "open",
+  "user": {
+    "name": "Test User",
+    "email": "test@example.com",
+    "login": "testuser",
+    "id": 1234,
+    "node_id": "node123",
+    "avatar_url": "https://github.com/avatar.png",
+    "gravatar_id": null,
+    "url": "https://api.github.com/users/testuser",
+    "html_url": "https://github.com/testuser",
+    "followers_url": "https://api.github.com/users/testuser/followers",
+    "following_url": "https://api.github.com/users/testuser/following{/other_user}",
+    "gists_url": "https://api.github.com/users/testuser/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/testuser/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/testuser/subscriptions",
+    "organizations_url": "https://api.github.com/users/testuser/orgs",
+    "repos_url": "https://api.github.com/users/testuser/repos",
+    "events_url": "https://api.github.com/users/testuser/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/testuser/received_events",
+    "type": "User",
+    "site_admin": false
+  },
+  "number": 123
+}
