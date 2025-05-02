@@ -61,6 +61,7 @@ open class GithubRequests {
 
         } catch (e: RedirectResponseException) {
             if (e.response.status == HttpStatusCode.NotModified) {
+                println("Using Cache for notifications")
                 // Even on 304, update the ETag if present
                 return NotificationThreadResponse(notificationThreads = lastNotifications, headers = e.response.headers)
             }
@@ -90,7 +91,6 @@ open class GithubRequests {
         return PullRequestsResponse(pullRequest = pullRequest, headers = response.headers)
     }
 
-    // Skip no need to test
     open suspend fun markNotificationThreadAsRead(threadId: String) {
         try {
             val url = "https://api.github.com/notifications/threads/$threadId"

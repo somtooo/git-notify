@@ -69,11 +69,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     )
                     // update state for next iteration
                     notificationThreadIdToPullRequestNumber = updatedMap
-                    println("Im about to print the map in the pollForNotifications")
-                    notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
-                        println("Thread ID: $key, Pull Request Number: $value")
-                    }
-                    println("This is delay $baseDelay")
                     retryCount = updatedRetry
                     delay(baseDelay)
                 } catch (e: Exception) {
@@ -113,38 +108,22 @@ class GithubNotification(private val project: Project, private val scope: Corout
                     if (pullRequestResponse.state == PullRequestState.CLOSED) {
                         githubRequests.markNotificationThreadAsRead(notificationThreadResponse.id)
                     }
-                    println("Im a pull request response ${pullRequestResponse.number}")
                     if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] == null && notificationThreadResponse.reason == reasonKey && pullRequestResponse.state == PullRequestState.OPEN) {
-                        println("I should save in the map")
                         val content =
                             "${pullRequestResponse.user.login.toUpperCasePreservingASCIIRules()} has requested you review their PR"
                         notifyPullRequest(content)
-                        println("I have notified")
                         val publisher =
                             project.messageBus.syncPublisher(ReviewRequestedNotifier.REVIEW_REQUESTED_TOPIC)
                         publisher.onReviewRequested(ReviewRequestedContext(pullRequestUrl = pullRequestUrl))
                         notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] =
                             pullRequestNumber
-                        println("Im about to print the map")
-                        notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
-                            println("Thread ID: $key, Pull Request Number: $value")
-                        }
                     }
 
                     if (notificationThreadIdToPullRequestNumber[notificationThreadResponse.id] !== null && pullRequestResponse.state == PullRequestState.CLOSED) {
-                        println("Im already in the map")
-                        println("Im deleting from the map")
                         // If the PR is closed, mark as read and remove from the map if present
                         notificationThreadIdToPullRequestNumber.remove(notificationThreadResponse.id)
                     }
-                    println("this is notification response size in if ${notificationThreadResponses.notificationThreads.size}")
                 }
-                println("this is notification response size outside if ${notificationThreadResponses.notificationThreads.size}")
-            }
-            println("this is notification response size outside loop ${notificationThreadResponses.notificationThreads.size}")
-            println("Im about to print the map in the pollForNotifications outside loop")
-            notificationThreadIdToPullRequestNumber.forEach { (key, value) ->
-                println("Thread ID: $key, Pull Request Number: $value")
             }
             retryCount = 0
         } catch (e: Exception) {
@@ -180,7 +159,6 @@ class GithubNotification(private val project: Project, private val scope: Corout
             return response.pullRequest
         } catch (e: RedirectResponseException) {
             if (e.response.status == HttpStatusCode.NotModified) {
-                println("USING CACHE")
                 return lastPullRequest[pullNumber]
                     ?: throw IllegalStateException("No cached pull request found for $pullNumber")
             }
