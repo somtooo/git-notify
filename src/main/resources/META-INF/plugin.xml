@@ -6,7 +6,8 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
-
+    <depends>intellij.libraries.ktor.client</depends>
+    <depends>intellij.libraries.ktor.client.cio</depends>
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">

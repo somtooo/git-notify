@@ -48,20 +48,23 @@ dependencies {
         // Plugin Dependencies. Uses `platformPlugins` property from the gradle.properties file for plugin from JetBrains Marketplace.
         plugins(providers.gradleProperty("platformPlugins").map { it.split(',') })
 
+        bundledModule("intellij.libraries.ktor.client")
+        bundledModule("intellij.libraries.ktor.client.cio")
         instrumentationTools()
         pluginVerifier()
         zipSigner()
         testFramework(TestFrameworkType.Platform)
     }
-    implementation("io.ktor:ktor-client-cio:${ktorVersion}") {
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
-    }
-    implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}") {
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
-    }
-    implementation("io.ktor:ktor-serialization-kotlinx-json:${ktorVersion}") {
-        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
-    }
+
+//    implementation("io.ktor:ktor-client-cio:${ktorVersion}") {
+//        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+//    }
+//    implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}") {
+//        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+//    }
+//    implementation("io.ktor:ktor-serialization-kotlinx-json:${ktorVersion}") {
+//        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-core")
+    // }
 }
 
 
